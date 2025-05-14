@@ -1,0 +1,270 @@
+//@version=6
+indicator("Open Market V3 - Higher/Lower configurable", overlay=true)
+
+// Configuration du délai après la cassure
+delayCandles = input.int(3, title="Délai après breakout (bougies)", minval=1, maxval=20)
+
+// Groupe de paramètres pour les horaires de session
+var string groupHoraires = "Horaires des sessions"
+
+// Configuration des horaires avec des listes déroulantes
+usOpenHour = input.int(9, title="Heure d'ouverture US", options=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23], group=groupHoraires)
+usOpenMinute = input.int(30, title="Minute d'ouverture US", options=[0,5,10,15,20,25,30,35,40,45,50,55], group=groupHoraires)
+usCloseHour = input.int(16, title="Heure de fermeture US", options=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23], group=groupHoraires)
+usCloseMinute = input.int(0, title="Minute de fermeture US", options=[0,5,10,15,20,25,30,35,40,45,50,55], group=groupHoraires)
+
+euOpenHour = input.int(2, title="Heure d'ouverture Europe", options=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23], group=groupHoraires)
+euOpenMinute = input.int(0, title="Minute d'ouverture Europe", options=[0,5,10,15,20,25,30,35,40,45,50,55], group=groupHoraires)
+euCloseHour = input.int(11, title="Heure de fermeture Europe", options=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23], group=groupHoraires)
+euCloseMinute = input.int(30, title="Minute de fermeture Europe", options=[0,5,10,15,20,25,30,35,40,45,50,55], group=groupHoraires)
+
+// Groupe de paramètres pour les durées d'analyse par indice
+var string groupDurees = "Durées d'analyse par indice (minutes)"
+
+// Configuration des durées par indice
+durationNasdaq = input.int(5, title="US100 (NASDAQ)", minval=1, maxval=60, group=groupDurees)
+durationSP500 = input.int(5, title="US500 (S&P 500)", minval=1, maxval=60, group=groupDurees)
+durationDow = input.int(5, title="US30 (DOW)", minval=1, maxval=60, group=groupDurees)
+durationCac = input.int(15, title="FRA40 (CAC)", minval=1, maxval=60, group=groupDurees)
+durationDax = input.int(15, title="GER40 (DAX)", minval=1, maxval=60, group=groupDurees)
+durationFtse = input.int(15, title="UK100 (FTSE)", minval=1, maxval=60, group=groupDurees)
+durationEu50 = input.int(15, title="EU50 (EUROSTOXX)", minval=1, maxval=60, group=groupDurees)
+durationGold = input.int(5, title="OR (GOLD)", minval=1, maxval=60, group=groupDurees)
+durationDefault = input.int(5, title="Autres instruments", minval=1, maxval=60, group=groupDurees)
+
+// Groupe pour les paramètres visuels
+var string groupVisuel = "Paramètres visuels"
+
+// Couleurs personnalisables pour les niveaux
+highLevelColor = input.color(color.green, title="Couleur niveau haut", group=groupVisuel)
+lowLevelColor = input.color(color.red, title="Couleur niveau bas", group=groupVisuel)
+infoLabelColor = input.color(color.new(color.blue, 80), title="Couleur étiquette info", group=groupVisuel)
+showInfoLabel = input.bool(true, title="Afficher l'étiquette d'information", group=groupVisuel)
+
+// Détection de l'actif par son nom
+symbol = syminfo.tickerid
+
+// Variables pour l'horaire et la durée d'analyse
+var int openHour = na
+var int openMinute = na
+var int closeHour = na
+var int closeMinute = na
+var int analysisDuration = na
+var bool isEuropeanIndex = false
+
+// Détection des horaires et durée en fonction de l'indice
+if str.contains(symbol, "US100") or str.contains(symbol, "NASDAQ")
+    openHour := usOpenHour
+    openMinute := usOpenMinute
+    closeHour := usCloseHour
+    closeMinute := usCloseMinute
+    analysisDuration := durationNasdaq
+    isEuropeanIndex := false
+else if str.contains(symbol, "US500") or str.contains(symbol, "SPX") or str.contains(symbol, "S&P")
+    openHour := usOpenHour
+    openMinute := usOpenMinute
+    closeHour := usCloseHour
+    closeMinute := usCloseMinute
+    analysisDuration := durationSP500
+    isEuropeanIndex := false
+else if str.contains(symbol, "US30") or str.contains(symbol, "DOW") or str.contains(symbol, "DJI")
+    openHour := usOpenHour
+    openMinute := usOpenMinute
+    closeHour := usCloseHour
+    closeMinute := usCloseMinute
+    analysisDuration := durationDow
+    isEuropeanIndex := false
+else if str.contains(symbol, "FRA40") or str.contains(symbol, "CAC")
+    openHour := euOpenHour
+    openMinute := euOpenMinute
+    closeHour := euCloseHour
+    closeMinute := euCloseMinute
+    analysisDuration := durationCac
+    isEuropeanIndex := true
+else if str.contains(symbol, "GER40") or str.contains(symbol, "DAX") or str.contains(symbol, "German 40")
+    openHour := euOpenHour
+    openMinute := euOpenMinute
+    closeHour := euCloseHour
+    closeMinute := euCloseMinute
+    analysisDuration := durationDax
+    isEuropeanIndex := true
+else if str.contains(symbol, "UK100") or str.contains(symbol, "FTSE") or str.contains(symbol, "UK 100")
+    openHour := euOpenHour
+    openMinute := euOpenMinute
+    closeHour := euCloseHour
+    closeMinute := euCloseMinute
+    analysisDuration := durationFtse
+    isEuropeanIndex := true
+else if str.contains(symbol, "EU50") or str.contains(symbol, "EU Stocks 50")
+    openHour := euOpenHour
+    openMinute := euOpenMinute
+    closeHour := euCloseHour
+    closeMinute := euCloseMinute
+    analysisDuration := durationEu50
+    isEuropeanIndex := true
+else if str.contains(symbol, "GOLD") or str.contains(symbol, "XAU")
+    openHour := usOpenHour
+    openMinute := usOpenMinute
+    closeHour := usCloseHour
+    closeMinute := usCloseMinute
+    analysisDuration := durationGold
+    isEuropeanIndex := false
+else
+    openHour := usOpenHour
+    openMinute := usOpenMinute
+    closeHour := usCloseHour
+    closeMinute := usCloseMinute
+    analysisDuration := durationDefault
+    isEuropeanIndex := false
+
+// Fonction utilitaire pour convertir des valeurs qui pourraient être "na" en string sécurisé
+// SOLUTION COMPATIBLE: Approche simple et universelle pour PineScript
+safeToString(value, format = "") => 
+    str.format("{0}", value)
+
+// Info sur l'écran pour le débug - Utilisation de safeToString pour éviter les erreurs
+var sessionInfo = str.format("{0} | Durée: {1} min | {2}:{3}-{4}:{5}", syminfo.ticker, safeToString(analysisDuration), safeToString(openHour), safeToString(openMinute), safeToString(closeHour), safeToString(closeMinute))
+
+// Affichage des informations de configuration en haut du graphique
+var label infoLabel = na
+if barstate.islast and showInfoLabel
+    infoLabel := label.new(bar_index, high, text=sessionInfo, style=label.style_label_down, color=infoLabelColor, textcolor=color.white, size=size.small)
+    label.delete(infoLabel[1])
+
+// Calcul des timestamps d'ouverture et de fermeture (heure NY)
+marketOpenTime = timestamp("America/New_York", year(time), month(time), dayofmonth(time), openHour, openMinute)
+marketCloseTime = timestamp("America/New_York", year(time), month(time), dayofmonth(time), closeHour, closeMinute)
+
+// Détection des premières minutes (durée configurable)
+isAnalysisPeriod = (time >= marketOpenTime and time < marketOpenTime + analysisDuration * 60 * 1000)
+isNewSession = ta.change(dayofmonth(time)) != 0
+
+// Variables pour stocker les niveaux de la période d'analyse
+var float sessionHigh = na
+var float sessionLow = na
+
+// Variables pour les breakouts
+var int crossUpIndex = na
+var int crossDownIndex = na
+var bool hasTriggeredUp = false
+var bool hasTriggeredDown = false
+var float prevClose = na
+
+// Variables pour le debug
+var int lastResetBar = na
+var string lastResetReason = ""
+var string lastAction = ""
+var int lastActionBar = na
+
+// Réinitialisation au début de chaque nouvelle session ou lors d'un changement de paramètres
+if isNewSession or barstate.isfirst
+    sessionHigh := na
+    sessionLow := na
+    crossUpIndex := na
+    crossDownIndex := na
+    hasTriggeredUp := false
+    hasTriggeredDown := false
+    prevClose := na
+    
+    // Log de la réinitialisation
+    lastResetBar := bar_index
+    lastResetReason := isNewSession ? "Nouvelle session" : "Changement de paramètres"
+    lastAction := "Réinitialisation"
+    lastActionBar := bar_index
+
+// Mise à jour des plus hauts et plus bas pendant la période d'analyse
+if isAnalysisPeriod
+    float oldHigh = sessionHigh
+    float oldLow = sessionLow
+    
+    sessionHigh := na(sessionHigh) ? high : math.max(sessionHigh, high)
+    sessionLow := na(sessionLow) ? low : math.min(sessionLow, low)
+    
+    // Log des changements
+    if oldHigh != sessionHigh or oldLow != sessionLow
+        lastAction := "Mise à jour des niveaux"
+        lastActionBar := bar_index
+
+// Tracer les niveaux de plus haut et plus bas
+plot(sessionHigh, title="Plus Haut", color=highLevelColor, linewidth=2, style=plot.style_stepline)
+plot(sessionLow, title="Plus Bas", color=lowLevelColor, linewidth=2, style=plot.style_stepline)
+
+// Détection du breakout (MODIFIÉ : vérifie que le corps entier a traversé le niveau)
+// Pour un breakout haussier : la clôture actuelle est au-dessus du niveau haut ET la clôture précédente était en-dessous
+bool crossAbove = not na(sessionHigh) and close > sessionHigh and (na(prevClose) or prevClose <= sessionHigh)
+
+// Pour un breakout baissier : la clôture actuelle est en-dessous du niveau bas ET la clôture précédente était au-dessus
+bool crossBelow = not na(sessionLow) and close < sessionLow and (na(prevClose) or prevClose >= sessionLow)
+
+// Mise à jour de la clôture précédente pour la prochaine bougie
+prevClose := close
+
+// Enregistre l'index où le breakout s'est produit
+if crossAbove
+    crossUpIndex := bar_index
+    lastAction := "Breakout HAUT détecté"
+    lastActionBar := bar_index
+
+if crossBelow
+    crossDownIndex := bar_index
+    lastAction := "Breakout BAS détecté"
+    lastActionBar := bar_index
+
+// Vérifie si le délai est écoulé après la cassure, avec protection contre les réinitilisations
+bool alertAfterUp = not na(crossUpIndex) and (bar_index == crossUpIndex + delayCandles)
+bool alertAfterDown = not na(crossDownIndex) and (bar_index == crossDownIndex + delayCandles)
+
+// Log des conditions d'alerte
+if alertAfterUp
+    lastAction := hasTriggeredUp ? "Délai écoulé mais déjà déclenché (HAUT)" : "Délai écoulé pour alerte HAUT"
+    lastActionBar := bar_index
+
+if alertAfterDown
+    lastAction := hasTriggeredDown ? "Délai écoulé mais déjà déclenché (BAS)" : "Délai écoulé pour alerte BAS"
+    lastActionBar := bar_index
+
+// Ajoute un debug label complet pour visualiser l'état des variables
+if barstate.islast
+    var label debugLabel = na
+    var label conditionsLabel = na
+    
+    // Formatage des logs principaux - Utilisation de safeToString pour éviter les erreurs
+    string debugText = str.format("Niveaux: H={0}, B={1}\nBreakouts: Up={2}@{3}, Down={4}@{5}\nDéclencheurs: Up={6}, Down={7}\nDernière action: {8}@{9}\nDernière réinitialisation: {10}@{11}",       safeToString(sessionHigh, "#.#"),        safeToString(sessionLow, "#.#"),        safeToString(crossUpIndex),        safeToString(na(crossUpIndex) ? na : (bar_index - crossUpIndex)),        safeToString(crossDownIndex),        safeToString(na(crossDownIndex) ? na : (bar_index - crossDownIndex)),        safeToString(hasTriggeredUp),        safeToString(hasTriggeredDown),        lastAction,        safeToString(lastActionBar),        lastResetReason,        safeToString(lastResetBar))
+
+    // Formatage des conditions d'alerte - Utilisation de safeToString pour éviter les erreurs
+    string condText = str.format("Conditions: isNewSession={0}, isAnalysisPeriod={1}\nCrossAbove={2}, CrossBelow={3}\nAlertAfterUp={4}, AlertAfterDown={5}", 
+                               safeToString(isNewSession), safeToString(isAnalysisPeriod), 
+                               safeToString(crossAbove), safeToString(crossBelow), 
+                               safeToString(alertAfterUp), safeToString(alertAfterDown))
+    
+    // Création des labels
+    //debugLabel := label.new(bar_index, low - (high-low)*0.5, text=debugText, style=label.style_label_up, color=color.new(color.gray, 70), textcolor=color.white, size=size.small)
+    //conditionsLabel := label.new(bar_index, high + (high-low)*0.5, text=condText, style=label.style_label_down, color=color.new(color.blue, 70), textcolor=color.white, size=size.small)
+    
+    // Suppression des anciens labels
+    label.delete(debugLabel[1])
+    label.delete(conditionsLabel[1])
+
+// Vérifie si le délai est écoulé et déclenche l'alerte uniquement une seule fois
+if alertAfterUp and not hasTriggeredUp
+    alert("Cassure HAUT validée après délai")
+    hasTriggeredUp := true
+    lastAction := "ALERTE HAUT envoyée"
+    lastActionBar := bar_index
+
+if alertAfterDown and not hasTriggeredDown
+    alert("Cassure BAS validée après délai")
+    hasTriggeredDown := true
+    lastAction := "ALERTE BAS envoyée"
+    lastActionBar := bar_index
+
+// Alerte pour un breakout dans n'importe quelle direction
+if (alertAfterUp or alertAfterDown) and not (hasTriggeredUp and hasTriggeredDown)
+    alert("Cassure validée après délai, peu importe la direction")
+    lastAction := "ALERTE GLOBALE envoyée"
+    lastActionBar := bar_index
+
+// Conditions d'alerte configurables dans TradingView
+alertcondition((alertAfterUp or alertAfterDown) and not (hasTriggeredUp and hasTriggeredDown), title="Breakout Global", message="Cassure validée après délai, peu importe la direction")
+alertcondition(alertAfterUp and not hasTriggeredUp, title="Breakout HAUT Confirmé", message="Cassure HAUT validée après délai")
+alertcondition(alertAfterDown and not hasTriggeredDown, title="Breakout BAS Confirmé", message="Cassure BAS validée après délai")
