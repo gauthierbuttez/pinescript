@@ -1,0 +1,1183 @@
+//@version=6
+strategy(title="Cross SMA X DEMA X EMA 200", shorttitle="Cross SMA X DEMA X EMA 200", overlay=true, format=format.price, precision=2, scale=scale.right, linktoseries=true, max_bars_back=1200, commission_type=strategy.commission.percent, commission_value=0.0, slippage=0, pyramiding=0, process_orders_on_close=false, calc_on_order_fills=false, calc_on_every_tick=false)
+// ==========================
+// Affichage Signaux
+// ==========================
+string G_SIGNALS="Afficha signaux =========================================="
+string G_STRAT="03 · Exécution stratégie — Entrées · Stop-Loss · Take Profit"
+string slMethod = input.string("SMA200_ATR", "Stop-Loss method", options=["SMA200_ATR"], group=G_STRAT, tooltip="Long= SMA200 − ATR×mult ; Short= SMA200 + ATR×mult")
+float slAtrMult = input.float(1.0, "SL ATR Mult", minval=0.0, step=0.1, group=G_STRAT, tooltip="Multiplicateur d’ATR utilisé pour le buffer du stop-loss autour de la SMA200")
+string tpMode = input.string("TP_RR", "Take Profit mode", options=["TP_RR"], group=G_STRAT, tooltip="TP_RR: take profit à R multiples de la distance Entrée→SL")
+float tpRR = input.float(2.0, "RR (R multiple)", minval=0.1, step=0.1, group=G_STRAT, tooltip="Take Profit à R multiples de la distance Entrée→SL (ex: 2.0 pour 2R)")
+float riskUSD = input.float(500.0, "Risk per trade (USD)", minval=0.01, step=1.0, group=G_STRAT, tooltip="Montant fixe perdu si le SL est frappé (devise du compte)")
+
+
+bool logTrades = input.bool(true, "Logs stratégie (OPEN/LIVE/CLOSE)", group=G_STRAT, tooltip="Active les logs détaillés d’entrées, SL/TP et sorties")
+bool showBuy = input.bool(true, "Show BUY signal", inline="SIGBUY", group=G_SIGNALS, tooltip="Affiche l'étiquette BUY lorsque la SMA20 croise au-dessus de la DEMA200 (après application des filtres).")
+bool showSell = input.bool(true, "Show SELL signal", inline="SIGSELL", group=G_SIGNALS, tooltip="Affiche l'étiquette SELL lorsque la SMA20 croise sous la DEMA200 (après application des filtres).")
+bool showBuy_DEMAxSMA = input.bool(true, "Show BUY (DEMA200 ↑ SMA200)", inline="SIG2BUY", group=G_SIGNALS, tooltip="Affiche le signal BUY DEMA lorsque la DEMA200 croise au-dessus de la SMA200 (après filtres).")
+bool showSell_DEMAxSMA = input.bool(true, "Show SELL (DEMA200 ↓ SMA200)", inline="SIG2SELL", group=G_SIGNALS, tooltip="Affiche le signal SELL DEMA lorsque la DEMA200 croise sous la SMA200 (après filtres).")
+bool showBuy_DEMAxEMA = input.bool(true, "Show BUY (DEMA200 ↑ EMA200)", inline="SIG3BUY", group=G_SIGNALS, tooltip="Affiche le signal BUY quand la DEMA200 croise au-dessus de l’EMA200 (après filtres).")
+bool showSell_DEMAxEMA = input.bool(true, "Show SELL (DEMA200 ↓ EMA200)", inline="SIG3SELL", group=G_SIGNALS, tooltip="Affiche le signal SELL quand la DEMA200 croise sous l’EMA200 (après filtres).")
+bool showBuy_BrkDEMA = input.bool(true, "Show BUY (Breakout DEMA200)", inline="SIG4BUY", group=G_SIGNALS, tooltip="Affiche le BUY quand une bougie haussière traverse la DEMA200 vers le haut (conditions précisées).")
+bool showSell_BrkDEMA = input.bool(true, "Show SELL (Breakout DEMA200 & EMA200)", inline="SIG4SELL", group=G_SIGNALS, tooltip="Affiche le SELL quand une bougie baissière traverse la DEMA200 vers le bas (conditions précisées).")
+bool showBuy_BrkDEMAEMASMA20 = input.bool(true, "Show BUY (Breakout DEMA200 & EMA200 & SMA20)", inline="SIG4BUY", group=G_SIGNALS, tooltip="Bougie haussière traverse SMA20, EMA200 et DEMA200 de bas en haut, avec DEMA200> SMA200 et EMA200> SMA200.")
+bool showSell_BrkDEMAEMASMA20 = input.bool(true, "Show SELL (Breakout DEMA200 & SMA20)", inline="SIG4SELL", group=G_SIGNALS, tooltip="Bougie baissière traverse SMA20, EMA200 et DEMA200 de haut en bas, avec DEMA200< SMA200 et EMA200< SMA200.")
+bool showTPLong = input.bool(true, "Show TP Long (DEMA200↓SMA200)", inline="TP_LONG", group=G_SIGNALS, tooltip="Affiche un marqueur de prise de profit LONG quand la DEMA200 croise SOUS la SMA200 (événement visuel).")
+bool showTPShort = input.bool(true, "Show TP Short (DEMA200↑SMA200)", inline="TP_SHORT", group=G_SIGNALS, tooltip="Affiche un marqueur de prise de profit SHORT quand la DEMA200 croise AU-DESSUS de la SMA200 (événement visuel).")
+// ——— RAW SIGNALS (sans filtres) ———
+bool showRSIStochADXBuySig  = input.bool(true,  "Show RAW BUY (RSI/Stoch/ADX/DI)",  inline="RAWSIG", group=G_SIGNALS, tooltip="Affiche le signal BUY simple (sans aucun filtre).")
+bool showRSIStochADXSellSig = input.bool(true,  "Show RAW SELL (RSI/ADX/DI)",        inline="RAWSIG", group=G_SIGNALS, tooltip="Affiche le signal SELL simple (sans aucun filtre).")
+bool  useDEMAvsEMA_raw = input.bool(false, "RAW filtre DEMA200 vs EMA200 (BUY: DEMA>EMA · SELL: DEMA<EMA)", group=G_SIGNALS, tooltip="Désactivé par défaut pour rester 'sans filtres'.")
+
+// ——— Seuils RAW SIGNALS ———
+float thStochBuy = input.float(20.0, "RAW thStochBuy (K% <)", minval=0.0, maxval=100.0, step=0.1, group=G_SIGNALS, tooltip="Seuil Stoch %K pour BUY simple (par défaut 20).")
+float thStochSell = input.float(80.0, "RAW thStochSell (%K >)", minval=0.0, maxval=100.0, step=0.1, group=G_SIGNALS, tooltip="Seuil Stoch %K pour SELL simple (par défaut 80).")
+
+float thRsiBuy   = input.float(30.0, "RAW thRsiBuy (RSI <)",  minval=0.0, maxval=100.0, step=0.1, group=G_SIGNALS, tooltip="Seuil RSI pour BUY simple (par défaut 30).")
+float thRsiSell  = input.float(70.0, "RAW thRsiSell (RSI >)", minval=0.0, maxval=100.0, step=0.1, group=G_SIGNALS, tooltip="Seuil RSI pour SELL simple (par défaut 70).")
+float thAdx      = input.float(60.0, "RAW thAdx (ADX >)",     minval=0.0, maxval=100.0, step=0.1, group=G_SIGNALS, tooltip="Seuil ADX pour signaux simples (par défaut 60).")
+
+
+
+// ==========================
+// Filtres (Timeframe courant — communs)
+// ==========================
+string G_FILTERS = "Filtres (Timeframe courant — communs) ===========================================" 
+
+bool useBuyFilterEMA200 = input.bool(true, "Filtre BUY: close > EMA200", inline="FILTBUY", group=G_FILTERS, tooltip="Si activé, n'autorise un BUY que si le cours de clôture est au-dessus de l’EMA200.")
+bool useSellFilterEMA200 = input.bool(true, "Filtre SELL: close < EMA200", inline="FILTSELL", group=G_FILTERS, tooltip="Si activé, n'autorise un SELL que si le cours de clôture est sous l’EMA200.")
+bool useBuyFilterSMA200 = input.bool(false, "Filtre BUY: close > SMA200", group=G_FILTERS, tooltip="Si activé, n'autorise un BUY que si le cours de clôture est au-dessus de la SMA200.")
+bool useSellFilterSMA200 = input.bool(false, "Filtre SELL: close < SMA200", group=G_FILTERS, tooltip="Si activé, n'autorise un SELL que si le cours de clôture est sous la SMA200.")
+bool useBuyFilterDEMAoverEMA = input.bool(true, "Filtre BUY: DEMA200 > EMA200", inline="FILTBUY_DEMAEMA", group=G_FILTERS, tooltip="Active une condition supplémentaire: pour valider un BUY, DEMA200 doit être > EMA200.")
+bool useSellFilterDEMAunderEMA = input.bool(true, "Filtre SELL: DEMA200 < EMA200", inline="FILTSELL_DEMAEMA", group=G_FILTERS, tooltip="Active une condition supplémentaire: pour valider un SELL, DEMA200 doit être < EMA200.")
+
+bool useNBarConfirm = input.bool(false, "Filtre N-bar: valider à …", group=G_FILTERS, tooltip="Active la validation à la Nᵉ bougie après le signal.")
+int  nConfirmBars  = input.int(60, "N (bougies après le signal)", minval=1, maxval=500, group=G_FILTERS, tooltip="Nombre de bougies à attendre (ex: 60).")
+
+
+bool useAtrDistDema200Filter = input.bool(true, "Filtre Prix distance DEMA200 (ATR×)", inline="ATRF", group=G_FILTERS, tooltip="Limite la distance entre le cours et la DEMA200 à un multiple d’ATR pour éviter les entrées trop éloignées.")
+float atrMultDema200 = input.float(1.0, "ATR×", minval=0.0, step=0.1, inline="ATRF", group=G_FILTERS, tooltip="Multiplicateur d’ATR pour la distance maximale autorisée close ↔ DEMA200.")
+bool useAtrDistSma200Filter = input.bool(true, "Filtre Prix distance SMA200 (ATR×)", inline="ATRF", group=G_FILTERS, tooltip="Limite la distance entre le cours et la SMA200 à un multiple d’ATR pour éviter les entrées trop éloignées.")
+float atrMultSma200 = input.float(1.0, "ATR×", minval=0.0, step=0.1, inline="ATRF", group=G_FILTERS, tooltip="Multiplicateur d’ATR pour la distance maximale autorisée close ↔ DEMA200.")
+
+int atrLen = input.int(14, "ATR Len", minval=1, inline="ATRF", group=G_FILTERS, tooltip="Longueur utilisée pour le calcul de l’ATR.")
+float atrVal = ta.atr(atrLen)
+
+int adxLen = input.int(14, "ADX Len", minval=1, group=G_FILTERS, tooltip="Longueur de calcul de l’ADX (méthode de Wilder).")
+int rsiLen = input.int(14, "RSI Len", minval=1, inline="RSI", group=G_FILTERS, tooltip="Longueur du RSI (utilisée pour KPI/affichage éventuels).")
+int stochLen = input.int(14, "Stoch Len", minval=1, inline="STOCH", group=G_FILTERS, tooltip="Longueur du Stochastique pour le calcul de %K.")
+int stochSmoothK = input.int(1, "Stoch %K Smoothing", minval=1, inline="STOCH", group=G_FILTERS, tooltip="Degrés de lissage appliqué à %K.")
+int diWindowLen = input.int(19, "DI Fenêtre (barres)", minval=1, inline="DIFLT", group=G_FILTERS, tooltip="Taille de la fenêtre (en barres) pour l’évaluation du plancher DI.")
+float diWindowThresh = input.float(20.0, "Seuil DI Fenêtre", minval=0.0, step=0.1, inline="DIFLT", group=G_FILTERS, tooltip="Seuil plancher DI à comparer dans la fenêtre.")
+
+
+// ——— ADX (Timeframe courant — commun) ———
+bool  useAdxFilter  = input.bool(true, "Filtre ADX (min ≥)", inline="ADXF",  group=G_FILTERS,           tooltip="Activer pour exiger un ADX minimal.")
+float adxMin        = input.float(20.0, "ADX ≥", minval=0.0, step=0.1, inline="ADXF",      group=G_FILTERS,           tooltip="Seuil ADX minimal requis.")
+float adxMax        = input.float(40.0, "ADX ≤", minval=0.0, step=0.1, inline="ADXF", group=G_FILTERS,           tooltip="Seuil ADX maximal autorisé.")
+
+bool useDiWindowFilter = input.bool(true, "Filtre DI (fenêtre)", inline="DIFLT", group=G_FILTERS, tooltip="Exige que DI+ (BUY) / DI− (SELL) ait atteint un plancher récent (fenêtre) pour favoriser les reprises après respiration.")
+
+// ==========================
+// BUY — Timeframe courant (nouveaux inputs dédiés)
+// ==========================
+string G_FILTERS_BUY_LTF = "// BUY — Timeframe courant ===========================================" 
+
+bool useDiBuyDominance = input.bool(true, "BUY: DI+ > DI−", inline="BUY_DI_DOM", group=G_FILTERS_BUY_LTF, tooltip="Exige DIplus > DIminus sur le timeframe courant pour les signaux BUY.")
+bool useRsiBuyFilter = input.bool(false, "BUY: RSI (min/max)", inline="RSI_BUY", group=G_FILTERS_BUY_LTF, tooltip="Active une plage RSI pour BUY (RSI > min et RSI ≤ max).")
+float rsiBuyMin = input.float(40.0, "RSI >", minval=0.0, maxval=100.0, step=0.1, inline="RSI_BUY", group=G_FILTERS_BUY_LTF, tooltip="Borne minimale de RSI requise pour valider un BUY.")
+float rsiBuyMax = input.float(68.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="RSI_BUY", group=G_FILTERS_BUY_LTF, tooltip="Borne maximale de RSI autorisée pour valider un BUY.")
+bool useStochFilter = input.bool(true, "BUY: Stoch (min/max)", inline="STOCH_BUY", group=G_FILTERS_BUY_LTF, tooltip="Active une plage %K bornée pour BUY.")
+float stochBuyMin = input.float(60.0, "%K >", minval=0.0, maxval=100.0, step=0.1, inline="STOCH_BUY", group=G_FILTERS_BUY_LTF, tooltip="Pour BUY, %K doit être strictement supérieur à ce seuil.")
+float stochBuyMax = input.float(90.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="STOCH_BUY", group=G_FILTERS_BUY_LTF, tooltip="Pour BUY, %K doit être strictement inférieur à ce seuil.")
+bool useStochBuyKgeD = input.bool(true, "BUY: %K ≥ %D", inline="STOCH_BUYKD", group=G_FILTERS_BUY_LTF, tooltip="Exige %K ≥ %D sur le timeframe courant pour BUY.")
+bool useDiPlusRangeBuy = input.bool(true, "BUY: DI+ (min/max)", inline="BUY_DI", group=G_FILTERS_BUY_LTF, tooltip="Active une plage DI+ pour BUY (DI+ > min et DI+ ≤ max).")
+float diPlusBuyMin = input.float(18.0, "DI+ >", minval=0.0, maxval=100.0, step=0.1, inline="BUY_DI", group=G_FILTERS_BUY_LTF, tooltip="Borne minimale DI+ pour BUY (optimisée).")
+float diPlusBuyMax = input.float(30.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="BUY_DI", group=G_FILTERS_BUY_LTF, tooltip="Borne maximale DI+ pour BUY (optimisée).")
+bool useAtrValueRangeBuy = input.bool(true, "BUY: ATR (min/max)", inline="BUY_ATRVAL", group=G_FILTERS_BUY_LTF, tooltip="Active une plage sur la valeur d’ATR (en points) pour BUY.")
+float atrBuyMin = input.float(2.0, "ATR >", minval=0.0, step=0.01, inline="BUY_ATRVAL", group=G_FILTERS_BUY_LTF, tooltip="Borne minimale d’ATR pour BUY (optimisée).")
+float atrBuyMax = input.float(3.5, "≤", minval=0.0, step=0.01, inline="BUY_ATRVAL", group=G_FILTERS_BUY_LTF, tooltip="Borne maximale d’ATR pour BUY (optimisée).")
+
+// ==========================
+// SELL — Timeframe courant (nouveaux inputs dédiés)
+// ==========================
+string G_FILTERS_SELL_LTF = "// SELL — Timeframe courant ===========================================" 
+
+bool useRsiSellRange = input.bool(false, "SELL: RSI (min/max)", inline="SELL_RSI", group=G_FILTERS_SELL_LTF, tooltip="Active une plage RSI pour SELL (RSI > min et RSI ≤ max).")
+float rsiSellMin = input.float(0.0, "RSI >", minval=0.0, maxval=100.0, step=0.1, inline="SELL_RSI", group=G_FILTERS_SELL_LTF, tooltip="Borne minimale de RSI pour SELL (laisser 0.0 si non utilisé).")
+float rsiSellMax = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL_RSI", group=G_FILTERS_SELL_LTF, tooltip="Borne maximale de RSI pour SELL (laisser 100.0 si non utilisé).")
+float stochSellMin = input.float(15.0, "Stoch %K >", minval=0.0, maxval=100.0, step=0.1, inline="SELL_STOCH", group=G_FILTERS_SELL_LTF, tooltip="Pour SELL, %K doit être strictement supérieur à ce seuil (éviter survente).")
+float stochSellMax = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL_STOCH", group=G_FILTERS_SELL_LTF, tooltip="Pour SELL, %K doit être strictement inférieur à ce seuil (complète le seuil >).")
+bool useStochSellKleD = input.bool(false, "SELL: %K ≤ %D", inline="SELL_STOCHKD", group=G_FILTERS_SELL_LTF, tooltip="Exige %K ≤ %D sur le timeframe courant pour SELL.")
+bool useDiSellDominance = input.bool(false, "SELL: DI− > DI+", inline="SELL_DI", group=G_FILTERS_SELL_LTF, tooltip="Exige DIminus > DIplus sur le timeframe courant (SELL).")
+bool useDiMinusRangeSell = input.bool(false, "SELL: DI− (min/max)", inline="SELL_DI_RANGE", group=G_FILTERS_SELL_LTF, tooltip="Active une plage DI− pour SELL (DI− > min et DI− ≤ max).")
+float diMinusSellMin = input.float(0.0, "DI− >", minval=0.0, maxval=100.0, step=0.1, inline="SELL_DI_RANGE", group=G_FILTERS_SELL_LTF, tooltip="Borne minimale DI− pour SELL.")
+float diMinusSellMax = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL_DI_RANGE", group=G_FILTERS_SELL_LTF, tooltip="Borne maximale DI− pour SELL.")
+bool useAtrValueRangeSell = input.bool(false, "SELL: ATR (min/max)", inline="SELL_ATRVAL", group=G_FILTERS_SELL_LTF, tooltip="Active une plage sur la valeur d’ATR (en points) pour SELL.")
+float atrSellMin = input.float(0.0, "ATR >", minval=0.0, step=0.01, inline="SELL_ATRVAL", group=G_FILTERS_SELL_LTF, tooltip="Borne minimale d’ATR pour SELL.")
+float atrSellMax = input.float(1e9, "≤", minval=0.0, step=0.01, inline="SELL_ATRVAL", group=G_FILTERS_SELL_LTF, tooltip="Borne maximale d’ATR pour SELL.")
+
+// ==========================
+// Filtres Indicateurs 1h (communs)
+// ==========================
+string G_FILTERS_COMMON_1H = "// Communs — 1H ===========================================" 
+
+// ——— ADX (1H — commun) ———
+bool  useAdxFilter_1H = input.bool(true, "Filtre ADX 1h", inline="ADXF_1H",  group=G_FILTERS_COMMON_1H, tooltip="Activer pour exiger un ADX 1h minimal.")
+float adxMin_1H       = input.float(20.0, "ADX 1h ≥", minval=0.0, step=0.1, inline="ADXF_1H",      group=G_FILTERS_COMMON_1H, tooltip="Seuil ADX 1h minimal requis.")
+float adxMax_1H       = input.float(40.0, "ADX 1h ≤", minval=0.0, step=0.1, inline="ADXF_1H", group=G_FILTERS_COMMON_1H, tooltip="Seuil ADX 1h maximal autorisé.")
+
+
+
+bool useDiWindowFilter_1H = input.bool(true, "Filtre DI 1h (fenêtre)", inline="DIFLT_1H", group=G_FILTERS_COMMON_1H, tooltip="Exige que DI+ (BUY) ou DI− (SELL) en 1h ait touché un plancher récent dans une fenêtre donnée.")
+int diWindowLen_1H = input.int(19, "DI Fenêtre 1h (barres)", minval=1, inline="DIFLT_1H", group=G_FILTERS_COMMON_1H, tooltip="Taille de la fenêtre (barres 1h) pour évaluer le plancher DI 1h.")
+float diWindowThresh_1H = input.float(20.0, "Seuil DI 1h", minval=0.0, step=0.1, inline="DIFLT_1H", group=G_FILTERS_COMMON_1H, tooltip="Seuil plancher DI 1h à comparer dans la fenêtre.")
+
+// ==========================
+// BUY — 1H (nouveaux inputs dédiés)
+// ==========================
+string G_FILTERS_BUY_1H = "// BUY — 1H ===========================================" 
+
+bool useDiBuyDominance_1H = input.bool(true, "BUY 1h: DI+ > DI−", inline="BUY1H_DI_DOM", group=G_FILTERS_BUY_1H, tooltip="Exige DIplus_1H > DIminus_1H au moment du signal (BUY).")
+bool useRsiBuyFilter_1H = input.bool(false, "BUY 1h: RSI (min/max)", inline="BUY1H_RSI", group=G_FILTERS_BUY_1H, tooltip="Active une plage RSI 1h pour BUY (RSI_1H > min et RSI_1H ≤ max).")
+float rsiBuyMin_1H = input.float(40.0, "RSI 1h >", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_RSI", group=G_FILTERS_BUY_1H, tooltip="Borne minimale du RSI 1h requise pour BUY.")
+float rsiBuyMax_1H = input.float(68.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_RSI", group=G_FILTERS_BUY_1H, tooltip="Borne maximale du RSI 1h autorisée pour BUY.")
+bool useStochFilter_1H = input.bool(true, "BUY 1h: Stoch (min/max)", inline="BUY1H_STOCH", group=G_FILTERS_BUY_1H, tooltip="Active le filtre %K 1h pour BUY.")
+float stochBuyMin_1H = input.float(45.0, "%K 1h >", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_STOCH", group=G_FILTERS_BUY_1H, tooltip="Borne minimale de %K 1h pour BUY.")
+float stochBuyMax_1H = input.float(90.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_STOCH", group=G_FILTERS_BUY_1H, tooltip="Borne maximale de %K 1h pour BUY.")
+bool useStochBuyKgeD_1H = input.bool(false, "BUY 1h: %K ≥ %D", inline="BUY1H_STOCHKD", group=G_FILTERS_BUY_1H, tooltip="Exige %K ≥ %D en 1h sur BUY.")
+bool useDiPlusRangeBuy_1H = input.bool(true, "BUY 1h: DI+ (min/max)", inline="BUY1H_DI", group=G_FILTERS_BUY_1H, tooltip="Active une plage DI+ 1h pour BUY (DI+_1H > min et DI+_1H ≤ max).")
+float diPlusBuyMin_1H = input.float(20.0, "DI+ 1h >", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_DI", group=G_FILTERS_BUY_1H, tooltip="Borne minimale DI+ 1h pour BUY (optimisée).")
+float diPlusBuyMax_1H = input.float(32.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="BUY1H_DI", group=G_FILTERS_BUY_1H, tooltip="Borne maximale DI+ 1h pour BUY (optimisée).")
+bool useAtrValueRangeBuy_1H = input.bool(true, "BUY 1h: ATR (min/max)", inline="BUY1H_ATRVAL", group=G_FILTERS_BUY_1H, tooltip="Active une plage sur la valeur d’ATR 1h (en points) pour BUY.")
+float atrBuyMin_1H = input.float(8.0, "ATR 1h >", minval=0.0, step=0.01, inline="BUY1H_ATRVAL", group=G_FILTERS_BUY_1H, tooltip="Borne minimale d’ATR 1h pour BUY (optimisée).")
+float atrBuyMax_1H = input.float(12.0, "≤", minval=0.0, step=0.01, inline="BUY1H_ATRVAL", group=G_FILTERS_BUY_1H, tooltip="Borne maximale d’ATR 1h pour BUY (optimisée).")
+
+// ==========================
+// SELL — 1H (nouveaux inputs dédiés)
+// ==========================
+string G_FILTERS_SELL_1H = "// SELL — 1H ===========================================" 
+
+bool useRsiSellRange_1H = input.bool(false, "SELL 1h: RSI (min/max)", inline="SELL1H_RSI", group=G_FILTERS_SELL_1H, tooltip="Active une plage de RSI 1h pour SELL (RSI_1H > min et RSI_1H ≤ max).")
+float rsiSellMin_1H = input.float(0.0, "RSI 1h >", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_RSI", group=G_FILTERS_SELL_1H, tooltip="Borne minimale de RSI 1h pour SELL.")
+float rsiSellMax_1H = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_RSI", group=G_FILTERS_SELL_1H, tooltip="Borne maximale de RSI 1h pour SELL.")
+bool useStochFilter_1H_SELLOVL = input.bool(true, "SELL 1h: Stoch (min/max)", inline="SELL1H_STOCH_TGL", group=G_FILTERS_SELL_1H, tooltip="Active le filtre %K 1h pour SELL.")
+float stochSellMin_1H = input.float(15.0, "%K 1h >", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_STOCH", group=G_FILTERS_SELL_1H, tooltip="Pour SELL, %K 1h doit être strictement supérieur à ce seuil.")
+float stochSellMax_1H = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_STOCH", group=G_FILTERS_SELL_1H, tooltip="Pour SELL, %K 1h doit être strictement inférieur à ce seuil (complète le seuil >).")
+bool useStochSellKleD_1H = input.bool(false, "SELL 1h: %K ≤ %D", inline="SELL1H_STOCHKD", group=G_FILTERS_SELL_1H, tooltip="Exige %K ≤ %D en 1h sur SELL.")
+bool useDiMinusRangeSell_1H = input.bool(false, "SELL 1h: DI− (min/max)", inline="SELL1H_DI_RANGE", group=G_FILTERS_SELL_1H, tooltip="Active une plage DI− 1h pour SELL (DI−_1H > min et DI−_1H ≤ max).")
+float diMinusSellMin_1H = input.float(0.0, "DI− 1h >", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_DI_RANGE", group=G_FILTERS_SELL_1H, tooltip="Borne minimale DI− 1h pour SELL.")
+float diMinusSellMax_1H = input.float(100.0, "≤", minval=0.0, maxval=100.0, step=0.1, inline="SELL1H_DI_RANGE", group=G_FILTERS_SELL_1H, tooltip="Borne maximale DI− 1h pour SELL.")
+bool useAtrValueRangeSell_1H = input.bool(false, "SELL 1h: ATR (min/max)", inline="SELL1H_ATRVAL", group=G_FILTERS_SELL_1H, tooltip="Active une plage sur la valeur d’ATR 1h (en points) pour SELL.")
+float atrSellMin_1H = input.float(0.0, "ATR 1h >", minval=0.0, step=0.01, inline="SELL1H_ATRVAL", group=G_FILTERS_SELL_1H, tooltip="Borne minimale d’ATR 1h pour SELL.")
+float atrSellMax_1H = input.float(1e9, "≤", minval=0.0, step=0.01, inline="SELL1H_ATRVAL", group=G_FILTERS_SELL_1H, tooltip="Borne maximale d’ATR 1h pour SELL.")
+bool useDiSellDominance_1H = input.bool(false, "SELL 1h: DI− > DI+", inline="SELL1H_DI", group=G_FILTERS_SELL_1H, tooltip="Exige DIminus_1H > DIplus_1H au moment du signal (SELL).")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ==========================
+// Affichage indicateurs
+// ==========================
+bool showSMA20 = input.bool(true, "Show SMA 20", inline="SMA20_VIS", group="Affichage indicateurs", tooltip="Affiche la moyenne mobile simple 20 périodes sur le graphique.")
+color colSMA20 = input.color(color.new(#28e503, 0), "Color", inline="SMA20_VIS", group="Affichage indicateurs", tooltip="Couleur de la SMA20.")
+int wSMA20 = input.int(1, "Width", minval=1, maxval=5, inline="SMA20_VIS", group="Affichage indicateurs", tooltip="Épaisseur de trait de la SMA20.")
+string stySMA20 = input.string("Line", "Style", options=["Line","Step","Circles"], inline="SMA20_VIS", group="Affichage indicateurs", tooltip="Style d’affichage de la SMA20.")
+bool showSMA200 = input.bool(true, "Show SMA 200", inline="SMA200_VIS", group="Affichage indicateurs", tooltip="Affiche la moyenne mobile simple 200 périodes.")
+color colSMA200 = input.color(color.new(#0e8601, 0), "Color", inline="SMA200_VIS", group="Affichage indicateurs", tooltip="Couleur de la SMA200.")
+int wSMA200 = input.int(3, "Width", minval=1, maxval=5, inline="SMA200_VIS", group="Affichage indicateurs", tooltip="Épaisseur de trait de la SMA200.")
+string stySMA200 = input.string("Line", "Style", options=["Line","Step","Circles"], inline="SMA200_VIS", group="Affichage indicateurs", tooltip="Style d’affichage de la SMA200.")
+bool showEMA200 = input.bool(true, "Show EMA 200", inline="EMA200_VIS", group="Affichage indicateurs", tooltip="Affiche la moyenne mobile exponentielle 200 périodes.")
+color colEMA200 = input.color(color.new(#0037ff, 0), "Color", inline="EMA200_VIS", group="Affichage indicateurs", tooltip="Couleur de l’EMA200.")
+int wEMA200 = input.int(3, "Width", minval=1, maxval=5, inline="EMA200_VIS", group="Affichage indicateurs", tooltip="Épaisseur de trait de l’EMA200.")
+string styEMA200 = input.string("Line", "Style", options=["Line","Step","Circles"], inline="EMA200_VIS", group="Affichage indicateurs", tooltip="Style d’affichage de l’EMA200.")
+bool showDEMA200 = input.bool(true, "Show DEMA 200", inline="DEMA200_VIS", group="Affichage indicateurs", tooltip="Affiche la moyenne mobile double exponentielle 200 périodes.")
+color colDEMA200 = input.color(color.new(#f906c0, 0), "Color", inline="DEMA200_VIS", group="Affichage indicateurs", tooltip="Couleur de la DEMA200.")
+int wDEMA200 = input.int(3, "Width", minval=1, maxval=5, inline="DEMA200_VIS", group="Affichage indicateurs", tooltip="Épaisseur de trait de la DEMA200.")
+string styDEMA200 = input.string("Line", "Style", options=["Line","Step","Circles"], inline="DEMA200_VIS", group="Affichage indicateurs", tooltip="Style d’affichage de la DEMA200.")
+
+
+// ==========================
+// Debugs
+// ==========================
+bool logDiag = input.bool(false, "Afficher logs debug", inline="LOG", group="Debugs", tooltip="Active les logs diagnostics (labels/log.info) pour investiguer les signaux et KPI. Peut ralentir légèrement.")
+bool logKPISignals = input.bool(false, "Afficher logs KPI des signaux", inline="LOG", group="Debugs", tooltip="Active les logs KPI des signaux pour le data scientist.")
+bool logKPIOpenTrades = input.bool(true, "Afficher logs KPI des ouvertures de trades", inline="LOG", group="Debugs", tooltip="Active les logs KPI des trades pour le data scientist.")
+bool logdump = input.bool(true, "Afficher logs DUMP", inline="LOG", group="Debugs", tooltip="Pour voir la valeur des paramètres.")
+// Toggle funnel : trace le 1er filtre qui invalide un trigger (BUY/SELL, LTF et 1H)
+bool logFunnel = input.bool(false, "Afficher logs funnel (premier filtre qui casse)", inline="LOG", group="Debugs", tooltip="Active un log unique au moment du trigger qui indique le premier filtre bloquant dans la chaîne BUY/SELL (LTF+1H).")
+bool logOutcome = input.bool(false, "Afficher logs OUTCOME des trades fermés", inline="LOG", group="Debugs", tooltip="Active un log synthétique à chaque clôture de trade (direction, prix, PnL, run-up, drawdown).")
+bool logSignalRejections = input.bool(false, "Afficher logs des refus de signaux (raison)", inline="LOG", group="Debugs", tooltip="Log quand un signal brut est détecté mais rejeté après filtres, avec détail par filtre LTF et 1H.")
+
+
+
+// ——— Calculs MAs ———
+float ema200 = ta.ema(close, 200)
+float sma200 = ta.sma(close, 200)
+float sma20 = ta.sma(close, 20)
+float demaE1 = ta.ema(close, 200)
+float demaE2 = ta.ema(demaE1, 200)
+float dema200 = 2.0 * demaE1 - demaE2
+
+
+// ——— SMA20 plots (3 styles, affichage conditionnel) ———
+plot(sma20, title="SMA 20 — Line", color=colSMA20, linewidth=wSMA20, style=plot.style_line, display=(showSMA20 and stySMA20=="Line")?display.all:display.none)
+plot(sma20, title="SMA 20 — Step", color=colSMA20, linewidth=wSMA20, style=plot.style_stepline, display=(showSMA20 and stySMA20=="Step")?display.all:display.none)
+plot(sma20, title="SMA 20 — Circles", color=colSMA20, linewidth=wSMA20, style=plot.style_circles, display=(showSMA20 and stySMA20=="Circles")?display.all:display.none)
+
+// ——— SMA200 plots ———
+plot(sma200, title="SMA 200 — Line", color=colSMA200, linewidth=wSMA200, style=plot.style_line, display=(showSMA200 and stySMA200=="Line")?display.all:display.none)
+plot(sma200, title="SMA 200 — Step", color=colSMA200, linewidth=wSMA200, style=plot.style_stepline, display=(showSMA200 and stySMA200=="Step")?display.all:display.none)
+plot(sma200, title="SMA 200 — Circles", color=colSMA200, linewidth=wSMA200, style=plot.style_circles, display=(showSMA200 and stySMA200=="Circles")?display.all:display.none)
+
+// ——— EMA200 plots ———
+plot(ema200, title="EMA 200 — Line", color=colEMA200, linewidth=wEMA200, style=plot.style_line, display=(showEMA200 and styEMA200=="Line")?display.all:display.none)
+plot(ema200, title="EMA 200 — Step", color=colEMA200, linewidth=wEMA200, style=plot.style_stepline, display=(showEMA200 and styEMA200=="Step")?display.all:display.none)
+plot(ema200, title="EMA 200 — Circles", color=colEMA200, linewidth=wEMA200, style=plot.style_circles, display=(showEMA200 and styEMA200=="Circles")?display.all:display.none)
+
+// ——— DEMA200 plots ———
+plot(dema200, title="DEMA 200 — Line", color=colDEMA200, linewidth=wDEMA200, style=plot.style_line, display=(showDEMA200 and styDEMA200=="Line")?display.all:display.none)
+plot(dema200, title="DEMA 200 — Step", color=colDEMA200, linewidth=wDEMA200, style=plot.style_stepline, display=(showDEMA200 and styDEMA200=="Step")?display.all:display.none)
+plot(dema200, title="DEMA 200 — Circles", color=colDEMA200, linewidth=wDEMA200, style=plot.style_circles, display=(showDEMA200 and styDEMA200=="Circles")?display.all:display.none)
+
+
+bool triggerSignal = ta.crossover(sma20, dema200) or ta.crossunder(sma20, dema200) or ta.crossover(dema200, sma200) or ta.crossunder(dema200, sma200) or ta.crossover(dema200, ema200) or ta.crossunder(dema200, ema200) or ((dema200 > sma200) and (sma20 > dema200 and sma20 > sma200) and (open < dema200 and close > dema200 and close > open)) or ((dema200 < sma200) and (sma20 < dema200 and sma20 < sma200) and (open > dema200 and close < dema200 and close < open))
+triggerSignal := triggerSignal or ((dema200 > sma200 and ema200 > sma200 and open < sma20 and open < ema200 and open < dema200 and close > sma20 and close > ema200 and close > dema200 and close > open) or (dema200 < sma200 and ema200 < sma200 and open > sma20 and open > ema200 and open > dema200 and close < sma20 and close < ema200 and close < dema200 and close < open))
+
+
+// ====================================================================================
+// ——— Timeframe supérieur (1H) — snapshots MAJ seulement sur déclenchement ———
+string tfHTF = "60"
+var float rsiVal_1H = na
+var float stochKc_1H = na
+var float diPlus_1H = na
+var float diMinus_1H = na
+var float atrVal_1H = na
+var float adx_1H = na
+var bool adxOK_1H = true
+// [ADD] État du filtre RSI 1h (BUY)
+var bool rsiBuyOK_1H = true
+
+var bool adxMaxOK_1H = true
+var bool diBuyWindowOK_1H = true
+var bool diSellWindowOK_1H = true
+var bool stochBuyOK_1H = true
+var bool stochSellOK_1H = true
+// [ADD] État du filtre DI+>DI− en 1h (BUY)
+var bool diBuyDominanceOK_1H = true
+var float stochD_1H = na
+var bool stochSellKleD_OK_1H = true
+var bool rsiSellOK_1H = true
+var bool diSellDominanceOK_1H = true
+var bool diMinusRangeSellOK_1H = true
+var bool atrValueRangeSellOK_1H = true
+
+
+var bool stochBuyKgeD_OK_1H = true
+var bool diPlusRangeBuyOK_1H = true
+var bool atrValueRangeBuyOK_1H = true
+
+var bool pendBuyNth  = false
+var bool pendSellNth = false
+var float sigHighNthBuy = na
+var float sigLowNthSell = na
+var int sigBarNthBuy = na
+var int sigBarNthSell = na
+
+
+if triggerSignal
+    rsiVal_1H := request.security(syminfo.tickerid, tfHTF, ta.rsi(close, rsiLen), barmerge.gaps_off, barmerge.lookahead_off)
+    stochKc_1H := request.security(syminfo.tickerid, tfHTF, math.max(0.0, math.min(100.0, ta.sma(100.0 * (close - ta.lowest(low, stochLen)) / math.max(ta.highest(high, stochLen) - ta.lowest(low, stochLen), syminfo.mintick), stochSmoothK))), barmerge.gaps_off, barmerge.lookahead_off)
+    float trRma_1H = request.security(syminfo.tickerid, tfHTF, ta.rma(math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1]))), adxLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float dmPlusRma_1H = request.security(syminfo.tickerid, tfHTF, ta.rma(((high - nz(high[1])) > (nz(low[1]) - low) ? math.max(high - nz(high[1]), 0.0) : 0.0), adxLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float dmMinusRma_1H = request.security(syminfo.tickerid, tfHTF, ta.rma(((nz(low[1]) - low) > (high - nz(high[1])) ? math.max(nz(low[1]) - low, 0.0) : 0.0), adxLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    diPlus_1H := dmPlusRma_1H / math.max(trRma_1H, 1e-10) * 100.0
+    diMinus_1H := dmMinusRma_1H / math.max(trRma_1H, 1e-10) * 100.0
+    float dx_1H = request.security(syminfo.tickerid, tfHTF, 100.0 * math.abs((ta.rma(((high - nz(high[1])) > (nz(low[1]) - low) ? math.max(high - nz(high[1]), 0.0) : 0.0), adxLen) / ta.rma(math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1]))), adxLen)) - (ta.rma(((nz(low[1]) - low) > (high - nz(high[1])) ? math.max(nz(low[1]) - low, 0.0) : 0.0), adxLen) / ta.rma(math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1]))), adxLen))) / math.max((ta.rma(((high - nz(high[1])) > (nz(low[1]) - low) ? math.max(high - nz(high[1]), 0.0) : 0.0), adxLen) / ta.rma(math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1]))), adxLen)) + (ta.rma(((nz(low[1]) - low) > (high - nz(high[1])) ? math.max(nz(low[1]) - low, 0.0) : 0.0), adxLen) / ta.rma(math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1]))), adxLen)), 1e-10), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    adx_1H := request.security(syminfo.tickerid, tfHTF, ta.sma(dx_1H, adxLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    atrVal_1H := request.security(syminfo.tickerid, tfHTF, ta.atr(atrLen), barmerge.gaps_off, barmerge.lookahead_off)
+    adxOK_1H := not useAdxFilter_1H or adx_1H >= adxMin_1H
+    adxOK_1H := (not useAdxFilter_1H or adx_1H >= adxMin_1H) and adx_1H <= adxMax_1H
+    // [ADD] Filtre BUY 1h — actif si toggle ON, exige DIplus_1H > DIminus_1H
+    diBuyDominanceOK_1H := not useDiBuyDominance_1H or diPlus_1H > diMinus_1H
+
+    diBuyWindowOK_1H := not useDiWindowFilter_1H or ta.lowest(diPlus_1H, diWindowLen_1H) <= diWindowThresh_1H
+    diSellWindowOK_1H := not useDiWindowFilter_1H or ta.lowest(diMinus_1H, diWindowLen_1H) <= diWindowThresh_1H
+    stochBuyOK_1H := not useStochFilter_1H or stochKc_1H < stochBuyMax_1H
+    stochSellOK_1H := not useStochFilter_1H or stochKc_1H > stochSellMin_1H
+    float stochD_src_1H = request.security(syminfo.tickerid, tfHTF, ta.sma(math.max(0.0, math.min(100.0, ta.sma(100.0 * (close - ta.lowest(low, stochLen)) / math.max(ta.highest(high, stochLen) - ta.lowest(low, stochLen), syminfo.mintick), stochSmoothK))), 3), barmerge.gaps_off, barmerge.lookahead_off)
+    stochD_1H := math.max(0.0, math.min(100.0, stochD_src_1H))
+    stochSellKleD_OK_1H := not useStochSellKleD_1H or stochKc_1H <= stochD_1H
+    rsiSellOK_1H := not useRsiSellRange_1H or (rsiVal_1H > rsiSellMin_1H and rsiVal_1H < rsiSellMax_1H)
+    diSellDominanceOK_1H := not useDiSellDominance_1H or diMinus_1H > diPlus_1H
+    diMinusRangeSellOK_1H := not useDiMinusRangeSell_1H or (diMinus_1H > diMinusSellMin_1H and diMinus_1H <= diMinusSellMax_1H)
+    atrValueRangeSellOK_1H := not useAtrValueRangeSell_1H or (atrVal_1H > atrSellMin_1H and atrVal_1H <= atrSellMax_1H)
+
+    stochD_1H := request.security(syminfo.tickerid, tfHTF, ta.sma(math.max(0.0, math.min(100.0, ta.sma(100.0 * (close - ta.lowest(low, stochLen)) / math.max(ta.highest(high, stochLen) - ta.lowest(low, stochLen), syminfo.mintick), stochSmoothK))), 3), barmerge.gaps_off, barmerge.lookahead_off)
+    stochSellKleD_OK_1H := not useStochSellKleD_1H or stochKc_1H <= stochD_1H
+
+    stochD_1H := request.security(syminfo.tickerid, tfHTF, ta.sma(math.max(0.0, math.min(100.0, ta.sma(100.0 * (close - ta.lowest(low, stochLen)) / math.max(ta.highest(high, stochLen) - ta.lowest(low, stochLen), syminfo.mintick), stochSmoothK))), 3), barmerge.gaps_off, barmerge.lookahead_off)
+    stochBuyKgeD_OK_1H := not useStochBuyKgeD_1H or stochKc_1H >= stochD_1H
+    rsiSellOK_1H := not useRsiSellRange_1H or (rsiVal_1H > rsiSellMin_1H and rsiVal_1H <= rsiSellMax_1H)
+    diSellDominanceOK_1H := not useDiSellDominance_1H or diMinus_1H > diPlus_1H
+    diPlusRangeBuyOK_1H := not useDiPlusRangeBuy_1H or (diPlus_1H > diPlusBuyMin_1H and diPlus_1H <= diPlusBuyMax_1H)
+    diMinusRangeSellOK_1H := not useDiMinusRangeSell_1H or (diMinus_1H > diMinusSellMin_1H and diMinus_1H <= diMinusSellMax_1H)
+    atrValueRangeBuyOK_1H := not useAtrValueRangeBuy_1H or (atrVal_1H > atrBuyMin_1H and atrVal_1H <= atrBuyMax_1H)
+    atrValueRangeSellOK_1H := not useAtrValueRangeSell_1H or (atrVal_1H > atrSellMin_1H and atrVal_1H <= atrSellMax_1H)
+
+    // [ADD] Filtre RSI 1h (BUY) — actif si toggle ON, exige rsiVal_1H strictement entre min et max
+    rsiBuyOK_1H := not useRsiBuyFilter_1H or (rsiVal_1H > rsiBuyMin_1H and rsiVal_1H < rsiBuyMax_1H)
+
+    if logDiag
+        log.info("[IMM 1H] adx_1H=" + str.tostring(adx_1H) + " min=" + str.tostring(adxMin_1H) + " max=" + str.tostring(adxMax_1H) + " | adxOK_1H=" + str.tostring(adxOK_1H) + " adxMaxOK_1H=" + str.tostring(adxMaxOK_1H))
+        log.info("[IMM 1H] diPlus_1H=" + str.tostring(diPlus_1H) + " lowest+" + str.tostring(diWindowLen_1H) + "=" + str.tostring(ta.lowest(diPlus_1H, diWindowLen_1H)) + " | diBuyWindowOK_1H=" + str.tostring(diBuyWindowOK_1H))
+        log.info("[IMM 1H] diMinus_1H=" + str.tostring(diMinus_1H) + " lowest-" + str.tostring(diWindowLen_1H) + "=" + str.tostring(ta.lowest(diMinus_1H, diWindowLen_1H)) + " | diSellWindowOK_1H=" + str.tostring(diSellWindowOK_1H))
+        log.info("[IMM 1H] stochKc_1H=" + str.tostring(stochKc_1H) + " buy<" + str.tostring(stochBuyMax_1H) + " sell>" + str.tostring(stochSellMin_1H) + " | stochBuyOK_1H=" + str.tostring(stochBuyOK_1H) + " stochSellOK_1H=" + str.tostring(stochSellOK_1H))
+
+
+    // ——— Réévaluation des verrous 1h AU MÊME INSTANT (barre du trigger) ———
+    adxOK_1H := not useAdxFilter_1H or adx_1H >= adxMin_1H
+    adxOK_1H := (not useAdxFilter_1H or adx_1H >= adxMin_1H) and adx_1H <= adxMax_1H
+    diBuyWindowOK_1H := not useDiWindowFilter_1H or ta.lowest(diPlus_1H, diWindowLen_1H) <= diWindowThresh_1H
+    diSellWindowOK_1H := not useDiWindowFilter_1H or ta.lowest(diMinus_1H, diWindowLen_1H) <= diWindowThresh_1H
+    stochBuyOK_1H := not useStochFilter_1H or stochKc_1H < stochBuyMax_1H
+    stochSellOK_1H := not useStochFilter_1H or stochKc_1H > stochSellMin_1H
+    stochSellKleD_OK_1H := not useStochSellKleD_1H or stochKc_1H <= stochD_1H
+    rsiSellOK_1H := not useRsiSellRange_1H or (rsiVal_1H > rsiSellMin_1H and rsiVal_1H < rsiSellMax_1H)
+    diSellDominanceOK_1H := not useDiSellDominance_1H or diMinus_1H > diPlus_1H
+    diMinusRangeSellOK_1H := not useDiMinusRangeSell_1H or (diMinus_1H > diMinusSellMin_1H and diMinus_1H <= diMinusSellMax_1H)
+    atrValueRangeSellOK_1H := not useAtrValueRangeSell_1H or (atrVal_1H > atrSellMin_1H and atrVal_1H <= atrSellMax_1H)
+
+    stochSellKleD_OK_1H := not useStochSellKleD_1H or stochKc_1H <= stochD_1H
+
+    stochBuyKgeD_OK_1H := not useStochBuyKgeD_1H or stochKc_1H >= stochD_1H
+    rsiSellOK_1H := not useRsiSellRange_1H or (rsiVal_1H > rsiSellMin_1H and rsiVal_1H <= rsiSellMax_1H)
+    diSellDominanceOK_1H := not useDiSellDominance_1H or diMinus_1H > diPlus_1H
+    diPlusRangeBuyOK_1H := not useDiPlusRangeBuy_1H or (diPlus_1H > diPlusBuyMin_1H and diPlus_1H <= diPlusBuyMax_1H)
+    diMinusRangeSellOK_1H := not useDiMinusRangeSell_1H or (diMinus_1H > diMinusSellMin_1H and diMinus_1H <= diMinusSellMax_1H)
+    atrValueRangeBuyOK_1H := not useAtrValueRangeBuy_1H or (atrVal_1H > atrBuyMin_1H and atrVal_1H <= atrBuyMax_1H)
+    atrValueRangeSellOK_1H := not useAtrValueRangeSell_1H or (atrVal_1H > atrSellMin_1H and atrVal_1H <= atrSellMax_1H)
+
+    // ——— Logs de contrôle immédiats si besoin de debug sur la même barre ———
+    if logDiag
+        log.info("[HTF 1H|IMM] adx_1H=" + str.tostring(adx_1H) + " min=" + str.tostring(adxMin_1H) + " adxOK_1H=" + str.tostring(adxOK_1H))
+        log.info("[HTF 1H|IMM] diPlus_1H=" + str.tostring(diPlus_1H) + " lowest+" + str.tostring(diWindowLen_1H) + "=" + str.tostring(ta.lowest(diPlus_1H, diWindowLen_1H)) + " diBuyWindowOK_1H=" + str.tostring(diBuyWindowOK_1H) + " | diMinus_1H=" + str.tostring(diMinus_1H) + " lowest-" + str.tostring(diWindowLen_1H) + "=" + str.tostring(ta.lowest(diMinus_1H, diWindowLen_1H)) + " diSellWindowOK_1H=" + str.tostring(diSellWindowOK_1H))
+        log.info("[HTF 1H|IMM] stochKc_1H=" + str.tostring(stochKc_1H) + " buy<" + str.tostring(stochBuyMax_1H) + " stochBuyOK_1H=" + str.tostring(stochBuyOK_1H) + " | sell>" + str.tostring(stochSellMin_1H) + " stochSellOK_1H=" + str.tostring(stochSellOK_1H))
+
+
+
+
+// ==============================================================================================
+// =================================== Calcul des indicateurs ===================================
+// ==============================================================================================
+
+
+// ——— DI+/DI−/ADX continus (Wilder) — éviter toute rupture de lissage ———
+float tr = math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1])))
+float dmPlusRaw = (high - nz(high[1])) > (nz(low[1]) - low) ? math.max(high - nz(high[1]), 0.0) : 0.0
+float dmMinusRaw = (nz(low[1]) - low) > (high - nz(high[1])) ? math.max(nz(low[1]) - low, 0.0) : 0.0
+float trRma = ta.rma(tr, adxLen)
+float dmPlusRma = ta.rma(dmPlusRaw, adxLen)
+float dmMinusRma = ta.rma(dmMinusRaw, adxLen)
+float diPlus = dmPlusRma / math.max(trRma, 1e-10) * 100.0
+float diMinus = dmMinusRma / math.max(trRma, 1e-10) * 100.0
+float dx = math.abs(diPlus - diMinus) / math.max(diPlus + diMinus, 1e-10) * 100.0
+float adx = ta.sma(dx, adxLen)
+// ——— RSI/Stoch peuvent rester légers ; si tu veux, tu peux les garder comme avant ———
+float rsiVal = ta.rsi(close, rsiLen)
+float stochNum = close - ta.lowest(low, stochLen)
+float stochDen = math.max(ta.highest(high, stochLen) - ta.lowest(low, stochLen), syminfo.mintick)
+float stochKRaw = 100.0 * stochNum / stochDen
+float stochK = ta.sma(stochKRaw, stochSmoothK)
+float stochKc = math.max(0.0, math.min(100.0, stochK))
+// [ADD] %D = moyenne de %K ; puis clamp 0..100 comme pour %K
+float stochD = ta.sma(stochK, 3)
+float stochDc = math.max(0.0, math.min(100.0, stochD))
+
+
+
+
+
+
+// ==========================
+// RAW SIGNALS (sans filtres) — conditions + armement + edges
+// BUY: kSm(%Kc) < thStochBuy AND RSI < thRsiBuy AND ADX > thAdx AND DI− > DI+
+// SELL: RSI > thRsiSell AND ADX > thAdx AND DI+ > DI−
+// ==========================
+bool condBUYRSIStochADX_raw  = (stochKc < thStochBuy)  and (rsiVal < thRsiBuy)  and (adx > thAdx) and (diMinus > diPlus) and (not useDEMAvsEMA_raw or dema200 > ema200)
+bool condSELLRSIStochADX_raw = (stochKc > thStochSell) and (rsiVal > thRsiSell) and (adx > thAdx) and (diPlus  > diMinus) and (not useDEMAvsEMA_raw or dema200 < ema200)
+
+// Armement anti-répétition (edge-based)
+var bool armedBUYRSIStochADX  = true
+var bool armedSELLRSIStochADX = true
+var bool prevBUYRSIStochADXAll  = false
+var bool prevSELLRSIStochADXAll = false
+
+bool buyEdgeRSIStochADX_raw  = condBUYRSIStochADX_raw  and (not prevBUYRSIStochADXAll)  and armedBUYRSIStochADX
+bool sellEdgeRSIStochADX_raw = condSELLRSIStochADX_raw and (not prevSELLRSIStochADXAll) and armedSELLRSIStochADX
+
+// Mise à jour états pour edges
+prevBUYRSIStochADXAll  := condBUYRSIStochADX_raw
+prevSELLRSIStochADXAll := condSELLRSIStochADX_raw
+if buyEdgeRSIStochADX_raw
+    armedBUYRSIStochADX := false
+if sellEdgeRSIStochADX_raw
+    armedSELLRSIStochADX := false
+if not condBUYRSIStochADX_raw
+    armedBUYRSIStochADX := true
+if not condSELLRSIStochADX_raw
+    armedSELLRSIStochADX := true
+
+
+
+
+bool adxOK = (not useAdxFilter or adx >= adxMin) and adx <= adxMax
+
+float distFromDEMA = math.abs(close - dema200)
+float distFromSMA = math.abs(close - sma200)
+
+float maxDistDema200 = atrMultDema200 * atrVal
+float maxDistSma200 = atrMultSma200 * atrVal
+
+bool buyOkDistDema200 = not useAtrDistDema200Filter or (close >= dema200 and distFromDEMA <= maxDistDema200)
+bool sellOkDistDema200 = not useAtrDistDema200Filter or (close <= dema200 and distFromDEMA <= maxDistDema200)
+
+bool buyOkDistSma200 = not useAtrDistSma200Filter or (close >= sma200 and distFromSMA <= maxDistSma200)
+bool sellOkDistSma200 = not useAtrDistSma200Filter or (close <= sma200 and distFromSMA <= maxDistSma200)
+bool buySMA200OK = not useBuyFilterSMA200 or close > sma200
+bool sellSMA200OK = not useSellFilterSMA200 or close < sma200
+
+bool diBuyWindowOK = not useDiWindowFilter or ta.lowest(diPlus, diWindowLen) <= diWindowThresh
+bool diBuyDominanceOK = not useDiBuyDominance or diPlus > diMinus
+
+bool diSellWindowOK = not useDiWindowFilter or ta.lowest(diMinus, diWindowLen) <= diWindowThresh
+
+bool stochBuyOK = not useStochFilter or (stochKc < stochBuyMax and stochKc > stochBuyMin)
+bool stochSellOK = not useStochFilter or stochKc > stochSellMin
+bool stochBuyKgeD_OK = not useStochBuyKgeD or stochKc >= stochDc
+bool stochSellKleD_OK = not useStochSellKleD or stochKc <= stochDc
+bool rsiSellOK = not useRsiSellRange or (rsiVal > rsiSellMin and rsiVal < rsiSellMax)
+bool diSellDominanceOK = not useDiSellDominance or diMinus > diPlus
+bool diMinusRangeSellOK = not useDiMinusRangeSell or (diMinus > diMinusSellMin and diMinus <= diMinusSellMax)
+bool atrValueRangeSellOK = not useAtrValueRangeSell or (atrVal > atrSellMin and atrVal <= atrSellMax)
+
+
+bool rsiBuyOK = not useRsiBuyFilter or (rsiVal > rsiBuyMin and rsiVal < rsiBuyMax)
+
+bool diPlusRangeBuyOK = not useDiPlusRangeBuy or (diPlus > diPlusBuyMin and diPlus <= diPlusBuyMax)
+bool atrValueRangeBuyOK = not useAtrValueRangeBuy or (atrVal > atrBuyMin and atrVal <= atrBuyMax)
+
+
+bool buySignalRaw = ta.crossover(sma20, dema200)
+bool sellSignalRaw = ta.crossunder(sma20, dema200)
+bool buyDema200Sma200SignalRaw = ta.crossover(dema200, sma200)
+bool sellDema200Sma200SignalRaw = ta.crossunder(dema200, sma200)
+bool buyDema200Ema200SignalRaw = ta.crossover(dema200, ema200)
+bool sellDema200Ema200SignalRaw = ta.crossunder(dema200, ema200)
+
+
+
+
+
+
+
+
+bool buyBreakoutDemaRaw = (dema200 > sma200) and (sma20 > dema200 and sma20 > sma200) and (open < dema200 and close > dema200 and close > open)
+bool sellBreakoutDemaRaw = (dema200 < sma200) and (sma20 < dema200 and sma20 < sma200) and (open > dema200 and close < dema200 and close < open)
+bool buyBreakoutAll3Raw = (dema200 > sma200) and (ema200 > sma200) and (open < sma20 and open < ema200 and open < dema200) and (close > sma20 and close > ema200 and close > dema200) and (close > open)
+bool sellBreakoutAll3Raw = (dema200 < sma200) and (ema200 < sma200) and (open > sma20 and open > ema200 and open > dema200) and (close < sma20 and close < ema200 and close < dema200) and (close < open)
+
+bool tpLongSignal = ta.crossunder(dema200, sma200)
+bool tpShortSignal = ta.crossover(dema200, sma200)
+
+if logDiag and triggerSignal
+    bool trig_sma20_over_dema = ta.crossover(sma20, dema200)
+    bool trig_sma20_under_dema = ta.crossunder(sma20, dema200)
+    bool trig_dema_over_sma = ta.crossover(dema200, sma200)
+    bool trig_dema_under_sma = ta.crossunder(dema200, sma200)
+    bool trig_dema_over_ema = ta.crossover(dema200, ema200)
+    bool trig_dema_under_ema = ta.crossunder(dema200, ema200)
+    log.info("[TRIGGERS] sma20>dema=" + str.tostring(trig_sma20_over_dema) + " sma20<dema=" + str.tostring(trig_sma20_under_dema) + " | dema>sma=" + str.tostring(trig_dema_over_sma) + " dema<sma=" + str.tostring(trig_dema_under_sma) + " | dema>ema=" + str.tostring(trig_dema_over_ema) + " dema<ema=" + str.tostring(trig_dema_under_ema))
+    // ========= Étape 1 — FUNNEL de validation (première cause d'échec) =========
+if logFunnel and triggerSignal
+    bool b_raw = buySignalRaw
+    bool b_ema = not useBuyFilterEMA200 or close > ema200
+    bool b_sma = not useBuyFilterSMA200 or close > sma200
+    bool b_dist = buyOkDistDema200
+    bool b_adx = adxOK
+    bool b_diWnd = diBuyWindowOK
+    bool b_stoch = stochBuyOK
+    bool b_rsi = rsiBuyOK
+    bool b_kgeD = stochBuyKgeD_OK
+    bool b_diDom = diBuyDominanceOK
+    bool b_diRange = diPlusRangeBuyOK
+    bool b_atrVal = atrValueRangeBuyOK
+    bool b_adx1 = adxOK_1H
+    bool b_diWnd1 = diBuyWindowOK_1H
+    bool b_stoch1 = stochBuyOK_1H
+    bool b_rsi1 = rsiBuyOK_1H
+    bool b_diDom1 = diBuyDominanceOK_1H
+    bool b_diRange1 = diPlusRangeBuyOK_1H
+    bool b_atrVal1 = atrValueRangeBuyOK_1H
+    string ffBuy = "OK"
+    if not b_raw
+        ffBuy := "RAW_TRIGGER_FALSE"
+    if ffBuy == "OK" and not b_ema
+        ffBuy := "EMA200_FILTER"
+    if ffBuy == "OK" and not b_sma
+        ffBuy := "SMA200_FILTER"
+    if ffBuy == "OK" and not b_dist
+        ffBuy := "ATR_DISTANCE"
+    if ffBuy == "OK" and not b_adx
+        ffBuy := "ADX_RANGE_LTF"
+    if ffBuy == "OK" and not b_diWnd
+        ffBuy := "DI_WINDOW_LTF"
+    if ffBuy == "OK" and not b_stoch
+        ffBuy := "STOCH_RANGE_LTF"
+    if ffBuy == "OK" and not b_rsi
+        ffBuy := "RSI_RANGE_LTF"
+    if ffBuy == "OK" and not b_kgeD
+        ffBuy := "STOCH_K>=D_LTF"
+    if ffBuy == "OK" and not b_diDom
+        ffBuy := "DI+>DI-_LTF"
+    if ffBuy == "OK" and not b_diRange
+        ffBuy := "DI+_RANGE_LTF"
+    if ffBuy == "OK" and not b_atrVal
+        ffBuy := "ATR_VALUE_RANGE_LTF"
+    if ffBuy == "OK" and not b_adx1
+        ffBuy := "ADX_RANGE_1H"
+    if ffBuy == "OK" and not b_diWnd1
+        ffBuy := "DI_WINDOW_1H"
+    if ffBuy == "OK" and not b_stoch1
+        ffBuy := "STOCH_RANGE_1H"
+    if ffBuy == "OK" and not b_rsi1
+        ffBuy := "RSI_RANGE_1H"
+    if ffBuy == "OK" and not b_diDom1
+        ffBuy := "DI+>DI-_1H"
+    if ffBuy == "OK" and not b_diRange1
+        ffBuy := "DI+_RANGE_1H"
+    if ffBuy == "OK" and not b_atrVal1
+        ffBuy := "ATR_VALUE_RANGE_1H"
+    string s_ffBuy = ffBuy
+    string s_braw = str.tostring(b_raw)
+    string s_bema = str.tostring(b_ema)
+    string s_bsma = str.tostring(b_sma)
+    string s_bdist = str.tostring(b_dist)
+    string s_badx = str.tostring(b_adx)
+    string s_bdiw = str.tostring(b_diWnd)
+    string s_bsto = str.tostring(b_stoch)
+    string s_brsi = str.tostring(b_rsi)
+    string s_bkgd = str.tostring(b_kgeD)
+    string s_bdid = str.tostring(b_diDom)
+    string s_bdir = str.tostring(b_diRange)
+    string s_batr = str.tostring(b_atrVal)
+    string s_ba1 = str.tostring(b_adx1)
+    string s_bdw1 = str.tostring(b_diWnd1)
+    string s_bs1 = str.tostring(b_stoch1)
+    string s_br1 = str.tostring(b_rsi1)
+    string s_bd1 = str.tostring(b_diDom1)
+    string s_bdr1 = str.tostring(b_diRange1)
+    string s_bav1 = str.tostring(b_atrVal1)
+    log.info("FUNNEL_BUY;first_fail=" + s_ffBuy + ";raw=" + s_braw + ";ema=" + s_bema + ";sma=" + s_bsma + ";dist=" + s_bdist + ";adx=" + s_badx + ";diWnd=" + s_bdiw + ";stoch=" + s_bsto + ";rsi=" + s_brsi + ";k>=d=" + s_bkgd + ";diDom=" + s_bdid + ";diRange=" + s_bdir + ";atrVal=" + s_batr + ";adx1h=" + s_ba1 + ";diWnd1h=" + s_bdw1 + ";stoch1h=" + s_bs1 + ";rsi1h=" + s_br1 + ";diDom1h=" + s_bd1 + ";diRange1h=" + s_bdr1 + ";atrVal1h=" + s_bav1 + ";time=" + str.tostring(time) + ";bar_index=" + str.tostring(bar_index))
+    bool s_raw = sellSignalRaw
+    bool s_ema = not useSellFilterEMA200 or close < ema200
+    bool s_sma = not useSellFilterSMA200 or close < sma200
+    bool s_dist = sellOkDistDema200
+    bool s_adx = adxOK
+    bool s_diWnd = diSellWindowOK
+    bool s_stoch = stochSellOK
+    bool s_rsi = rsiSellOK
+    bool s_kleD = stochSellKleD_OK
+    bool s_diDom = diSellDominanceOK
+    bool s_diRange = diMinusRangeSellOK
+    bool s_atrVal = atrValueRangeSellOK
+    bool s_adx1 = adxOK_1H
+    bool s_diWnd1 = diSellWindowOK_1H
+    bool s_stoch1 = stochSellOK_1H
+    bool s_rsi1 = rsiSellOK_1H
+    bool s_kleD1 = stochSellKleD_OK_1H
+    bool s_diDom1 = diSellDominanceOK_1H
+    bool s_diRange1 = diMinusRangeSellOK_1H
+    bool s_atrVal1 = atrValueRangeSellOK_1H
+    string ffSell = "OK"
+    if not s_raw
+        ffSell := "RAW_TRIGGER_FALSE"
+    if ffSell == "OK" and not s_ema
+        ffSell := "EMA200_FILTER"
+    if ffSell == "OK" and not s_sma
+        ffSell := "SMA200_FILTER"
+    if ffSell == "OK" and not s_dist
+        ffSell := "ATR_DISTANCE"
+    if ffSell == "OK" and not s_adx
+        ffSell := "ADX_RANGE_LTF"
+    if ffSell == "OK" and not s_diWnd
+        ffSell := "DI_WINDOW_LTF"
+    if ffSell == "OK" and not s_stoch
+        ffSell := "STOCH_RANGE_LTF"
+    if ffSell == "OK" and not s_rsi
+        ffSell := "RSI_RANGE_LTF"
+    if ffSell == "OK" and not s_kleD
+        ffSell := "STOCH_K<=D_LTF"
+    if ffSell == "OK" and not s_diDom
+        ffSell := "DI->_DI+_LTF"
+    if ffSell == "OK" and not s_diRange
+        ffSell := "DI-_RANGE_LTF"
+    if ffSell == "OK" and not s_atrVal
+        ffSell := "ATR_VALUE_RANGE_LTF"
+    if ffSell == "OK" and not s_adx1
+        ffSell := "ADX_RANGE_1H"
+    if ffSell == "OK" and not s_diWnd1
+        ffSell := "DI_WINDOW_1H"
+    if ffSell == "OK" and not s_stoch1
+        ffSell := "STOCH_RANGE_1H"
+    if ffSell == "OK" and not s_rsi1
+        ffSell := "RSI_RANGE_1H"
+    if ffSell == "OK" and not s_kleD1
+        ffSell := "STOCH_K<=D_1H"
+    if ffSell == "OK" and not s_diDom1
+        ffSell := "DI->_DI+_1H"
+    if ffSell == "OK" and not s_diRange1
+        ffSell := "DI-_RANGE_1H"
+    if ffSell == "OK" and not s_atrVal1
+        ffSell := "ATR_VALUE_RANGE_1H"
+    string s_ffSell = ffSell
+    string s_sraw = str.tostring(s_raw)
+    string s_sema = str.tostring(s_ema)
+    string s_ssma = str.tostring(s_sma)
+    string s_sdist = str.tostring(s_dist)
+    string s_sadx = str.tostring(s_adx)
+    string s_sdiw = str.tostring(s_diWnd)
+    string s_ssto = str.tostring(s_stoch)
+    string s_srsi = str.tostring(s_rsi)
+    string s_skd = str.tostring(s_kleD)
+    string s_sdid = str.tostring(s_diDom)
+    string s_sdir = str.tostring(s_diRange)
+    string s_satr = str.tostring(s_atrVal)
+    string s_sa1 = str.tostring(s_adx1)
+    string s_sdw1 = str.tostring(s_diWnd1)
+    string s_ss1 = str.tostring(s_stoch1)
+    string s_sr1 = str.tostring(s_rsi1)
+    string s_skd1 = str.tostring(s_kleD1)
+    string s_sd1 = str.tostring(s_diDom1)
+    string s_sdr1 = str.tostring(s_diRange1)
+    string s_sav1 = str.tostring(s_atrVal1)
+    log.info("FUNNEL_SELL;first_fail=" + s_ffSell + ";raw=" + s_sraw + ";ema=" + s_sema + ";sma=" + s_ssma + ";dist=" + s_sdist + ";adx=" + s_sadx + ";diWnd=" + s_sdiw + ";stoch=" + s_ssto + ";rsi=" + s_srsi + ";k<=d=" + s_skd + ";diDom=" + s_sdid + ";diRange=" + s_sdir + ";atrVal=" + s_satr + ";adx1h=" + s_sa1 + ";diWnd1h=" + s_sdw1 + ";stoch1h=" + s_ss1 + ";rsi1h=" + s_sr1 + ";k<=d1h=" + s_skd1 + ";diDom1h=" + s_sd1 + ";diRange1h=" + s_sdr1 + ";atrVal1h=" + s_sav1 + ";time=" + str.tostring(time) + ";bar_index=" + str.tostring(bar_index))
+
+// ==============================================================================================
+// =================================== Signaux de base ==========================================
+// ==============================================================================================
+
+// ==========================
+// Signaux SELL (avec tous les filtres LTF + 1H câblés)
+// ==========================
+bool sellSignal = sellSignalRaw and (not useSellFilterEMA200 or close < ema200) and (not useSellFilterSMA200 or close < sma200) and sellOkDistDema200 and sellOkDistSma200 and adxOK and diSellWindowOK and stochSellOK and rsiSellOK and stochSellKleD_OK and diSellDominanceOK and diMinusRangeSellOK and atrValueRangeSellOK and adxOK_1H and diSellWindowOK_1H and stochSellOK_1H and rsiSellOK_1H and stochSellKleD_OK_1H and diSellDominanceOK_1H and diMinusRangeSellOK_1H and atrValueRangeSellOK_1H and (not useSellFilterDEMAunderEMA or dema200 < ema200)
+bool sellDema200Sma200Signal = sellDema200Sma200SignalRaw and (not useSellFilterEMA200 or close < ema200) and (not useSellFilterSMA200 or close < sma200) and sellOkDistDema200 and sellOkDistSma200 and adxOK and diSellWindowOK and stochSellOK and rsiSellOK and stochSellKleD_OK and diSellDominanceOK and diMinusRangeSellOK and atrValueRangeSellOK and adxOK_1H and diSellWindowOK_1H and stochSellOK_1H and rsiSellOK_1H and stochSellKleD_OK_1H and diSellDominanceOK_1H and diMinusRangeSellOK_1H and atrValueRangeSellOK_1H and (not useSellFilterDEMAunderEMA or dema200 < ema200)
+bool sellDema200Ema200Signal = sellDema200Ema200SignalRaw and (not useSellFilterEMA200 or close < ema200) and (not useSellFilterSMA200 or close < sma200) and sellOkDistDema200 and sellOkDistSma200 and adxOK and diSellWindowOK and stochSellOK and rsiSellOK and stochSellKleD_OK and diSellDominanceOK and diMinusRangeSellOK and atrValueRangeSellOK and adxOK_1H and diSellWindowOK_1H and stochSellOK_1H and rsiSellOK_1H and stochSellKleD_OK_1H and diSellDominanceOK_1H and diMinusRangeSellOK_1H and atrValueRangeSellOK_1H and (not useSellFilterDEMAunderEMA or dema200 < ema200)
+bool sellBreakoutDemaSignal = sellBreakoutDemaRaw and sellOkDistDema200 and sellOkDistSma200 and adxOK and diSellWindowOK and stochSellOK and rsiSellOK and stochSellKleD_OK and diSellDominanceOK and diMinusRangeSellOK and atrValueRangeSellOK and adxOK_1H and diSellWindowOK_1H and stochSellOK_1H and rsiSellOK_1H and stochSellKleD_OK_1H and diSellDominanceOK_1H and diMinusRangeSellOK_1H and atrValueRangeSellOK_1H and (not useSellFilterDEMAunderEMA or dema200 < ema200)
+bool sellBreakoutAll3Signal = sellBreakoutAll3Raw and sellOkDistDema200 and sellOkDistSma200 and adxOK and diSellWindowOK and stochSellOK and rsiSellOK and stochSellKleD_OK and diSellDominanceOK and diMinusRangeSellOK and atrValueRangeSellOK and adxOK_1H and diSellWindowOK_1H and stochSellOK_1H and rsiSellOK_1H and stochSellKleD_OK_1H and diSellDominanceOK_1H and diMinusRangeSellOK_1H and atrValueRangeSellOK_1H and (not useSellFilterDEMAunderEMA or dema200 < ema200)
+
+bool buyDema200Ema200Signal = buyDema200Ema200SignalRaw and (not useBuyFilterEMA200 or close > ema200) and (not useBuyFilterSMA200 or close > sma200) and buyOkDistDema200 and buyOkDistSma200 and adxOK and diBuyWindowOK and stochBuyOK and rsiBuyOK and stochBuyKgeD_OK and diBuyDominanceOK and diPlusRangeBuyOK and atrValueRangeBuyOK and adxOK_1H and diBuyWindowOK_1H and stochBuyOK_1H and rsiBuyOK_1H and diBuyDominanceOK_1H and diPlusRangeBuyOK_1H and atrValueRangeBuyOK_1H and (not useBuyFilterDEMAoverEMA or dema200 > ema200)
+bool buySignal = buySignalRaw and (not useBuyFilterEMA200 or close > ema200) and (not useBuyFilterSMA200 or close > sma200) and buyOkDistDema200 and buyOkDistSma200 and adxOK and diBuyWindowOK and stochBuyOK and rsiBuyOK and stochBuyKgeD_OK and diBuyDominanceOK and diPlusRangeBuyOK and atrValueRangeBuyOK and adxOK_1H and diBuyWindowOK_1H and stochBuyOK_1H and rsiBuyOK_1H and diBuyDominanceOK_1H and diPlusRangeBuyOK_1H and atrValueRangeBuyOK_1H and (not useBuyFilterDEMAoverEMA or dema200 > ema200)
+bool buyDema200Sma200Signal = buyDema200Sma200SignalRaw and (not useBuyFilterEMA200 or close > ema200) and (not useBuyFilterSMA200 or close > sma200) and buyOkDistDema200 and buyOkDistSma200 and adxOK and diBuyWindowOK and stochBuyOK and rsiBuyOK and stochBuyKgeD_OK and diBuyDominanceOK and diPlusRangeBuyOK and atrValueRangeBuyOK and adxOK_1H and diBuyWindowOK_1H and stochBuyOK_1H and rsiBuyOK_1H and diBuyDominanceOK_1H and diPlusRangeBuyOK_1H and atrValueRangeBuyOK_1H and (not useBuyFilterDEMAoverEMA or dema200 > ema200)
+bool buyBreakoutDemaSignal = buyBreakoutDemaRaw and buyOkDistDema200 and buyOkDistSma200 and adxOK and diBuyWindowOK and stochBuyOK and rsiBuyOK and stochBuyKgeD_OK and diBuyDominanceOK and diPlusRangeBuyOK and atrValueRangeBuyOK and adxOK_1H and diBuyWindowOK_1H and stochBuyOK_1H and rsiBuyOK_1H and diBuyDominanceOK_1H and diPlusRangeBuyOK_1H and atrValueRangeBuyOK_1H and (not useBuyFilterDEMAoverEMA or dema200 > ema200)
+bool buyBreakoutAll3Signal = buyBreakoutAll3Raw and buyOkDistDema200 and buyOkDistSma200 and adxOK and diBuyWindowOK and stochBuyOK and rsiBuyOK and stochBuyKgeD_OK and diBuyDominanceOK and diPlusRangeBuyOK and atrValueRangeBuyOK and adxOK_1H and diBuyWindowOK_1H and stochBuyOK_1H and rsiBuyOK_1H and diBuyDominanceOK_1H and diPlusRangeBuyOK_1H and atrValueRangeBuyOK_1H and (not useBuyFilterDEMAoverEMA or dema200 > ema200)
+
+
+// Tous les edges BUY actifs (respectent leurs toggles d’affichage/activation)
+bool anyBuyEdge = (showRSIStochADXBuySig and buyEdgeRSIStochADX_raw) or (showBuy and buySignal) or (showBuy_DEMAxSMA and buyDema200Sma200Signal) or (showBuy_DEMAxEMA and buyDema200Ema200Signal) or (showBuy_BrkDEMA and buyBreakoutDemaSignal) or (showBuy_BrkDEMAEMASMA20 and buyBreakoutAll3Signal)
+// Tous les edges SELL actifs
+bool anySellEdge = (showRSIStochADXSellSig and sellEdgeRSIStochADX_raw) or (showSell and sellSignal) or (showSell_DEMAxSMA and sellDema200Sma200Signal) or (showSell_DEMAxEMA and sellDema200Ema200Signal) or (showSell_BrkDEMA and sellBreakoutDemaSignal) or (showSell_BrkDEMAEMASMA20 and sellBreakoutAll3Signal)
+
+
+// Filtre N-bar global (appliqué à tous les signaux)
+bool nthBuyNow = false
+bool nthSellNow = false
+
+if barstate.isconfirmed and useNBarConfirm
+    if anyBuyEdge and not pendBuyNth
+        pendBuyNth := true
+        sigBarNthBuy := bar_index
+        sigHighNthBuy := high
+    if anySellEdge and not pendSellNth
+        pendSellNth := true
+        sigBarNthSell := bar_index
+        sigLowNthSell := low
+
+    if pendBuyNth
+        int barsSinceB = bar_index - sigBarNthBuy
+        if barsSinceB == nConfirmBars
+            nthBuyNow := close > sigHighNthBuy
+            pendBuyNth := false
+        if barsSinceB > nConfirmBars
+            pendBuyNth := false
+
+    if pendSellNth
+        int barsSinceS = bar_index - sigBarNthSell
+        if barsSinceS == nConfirmBars
+            nthSellNow := close < sigLowNthSell
+            pendSellNth := false
+        if barsSinceS > nConfirmBars
+            pendSellNth := false
+
+
+// ==============================================================================================
+// ==================== Étape 2 — Armement des entrées et pré-calcul du SL =======================
+// ==============================================================================================
+
+// 1) Déduire les signaux "exécutables" (doivent être affichables via leur toggle ET valider les filtres)
+// Inclure les RAW edges si leur toggle d’affichage est ON (pas de filtres appliqués)
+bool buyTriggerAll_N = (not useNBarConfirm and anyBuyEdge) or (useNBarConfirm and nthBuyNow)
+bool sellTriggerAll_N = (not useNBarConfirm and anySellEdge) or (useNBarConfirm and nthSellNow)
+bool execBuySignal = buyTriggerAll_N and buySMA200OK and adxOK and diBuyWindowOK and diBuyDominanceOK and stochBuyOK and stochBuyKgeD_OK and rsiBuyOK and diPlusRangeBuyOK and atrValueRangeBuyOK
+bool execSellSignal = sellTriggerAll_N and sellSMA200OK and adxOK and diSellWindowOK and diSellDominanceOK and stochSellOK and stochSellKleD_OK and rsiSellOK and diMinusRangeSellOK and atrValueRangeSellOK
+
+f_qty_fixed_risk(float _entry, float _sl, float _riskUSD)=>
+    float _move = math.abs(_entry - _sl)
+    float _pv = syminfo.pointvalue
+    float _riskPerUnit = math.max(_move * _pv, 1e-10)
+    float _q = _riskPerUnit > 0 ? _riskUSD / _riskPerUnit : 0.0
+    _q
+
+// ===================== Étape 3 — Exécution des ordres et SL/TP ======================
+string ENTRY_LONG_ID = "L-1"
+string EXIT_LONG_ID = "LX-1"
+string ENTRY_SHORT_ID = "S-1"
+string EXIT_SHORT_ID = "SX-1"
+var string lockLongTpMode = na
+var string lockShortTpMode = na
+var float lockLongSL = na
+var float lockShortSL = na
+var float lockLongRR = na
+var float lockShortRR = na
+bool inLong = strategy.position_size > 0
+bool inShort = strategy.position_size < 0
+if barstate.isnew
+    if execBuySignal[1] and not inLong and not inShort
+
+        float _slL = na
+        if slMethod=="SMA200_ATR"
+            _slL := sma200 - atrVal * slAtrMult
+        float _entryL = close
+        float _riskL = _entryL - _slL
+        float _limL0 = na
+        if tpMode=="TP_RR" and _riskL > 0
+            _limL0 := _entryL + _riskL * tpRR
+        lockLongSL := _slL
+        lockLongTpMode := tpMode
+        lockLongRR := tpRR
+        float _qtyL = f_qty_fixed_risk(_entryL, _slL, riskUSD)
+
+        strategy.entry(id=ENTRY_LONG_ID, direction=strategy.long, qty=_qtyL)
+        strategy.exit(id=EXIT_LONG_ID, from_entry=ENTRY_LONG_ID, stop=lockLongSL, limit=_limL0)
+        if logTrades
+            string s_modeL = lockLongTpMode
+            string s_entryL = str.tostring(_entryL)
+            string s_slL = str.tostring(lockLongSL)
+            string s_tpL = str.tostring(_limL0)
+            string s_qtyL = str.tostring(_qtyL)
+
+            log.info("OPEN LONG | mode=" + s_modeL + " | entry=" + s_entryL + " | SL=" + s_slL + " | TP=" + s_tpL + " | qty=" + s_qtyL)
+    if execSellSignal[1] and not inLong and not inShort
+        float _slS = na
+        if slMethod=="SMA200_ATR"
+            _slS := sma200 + atrVal * slAtrMult
+        float _entryS = close
+        float _riskS = _slS - _entryS
+        float _limS0 = na
+        if tpMode=="TP_RR" and _riskS > 0
+            _limS0 := _entryS - _riskS * tpRR
+        lockShortSL := _slS
+        lockShortTpMode := tpMode
+        lockShortRR := tpRR
+        float _qtyS = f_qty_fixed_risk(_entryS, _slS, riskUSD)
+
+        strategy.entry(id=ENTRY_SHORT_ID, direction=strategy.short, qty=_qtyS)
+        strategy.exit(id=EXIT_SHORT_ID, from_entry=ENTRY_SHORT_ID, stop=lockShortSL, limit=_limS0)
+        if logTrades
+            string s_modeS = lockShortTpMode
+            string s_entryS = str.tostring(_entryS)
+            string s_slS = str.tostring(lockShortSL)
+            string s_tpS = str.tostring(_limS0)
+            string s_qtyS = str.tostring(_qtyS)
+
+            log.info("OPEN SHORT | mode=" + s_modeS + " | entry=" + s_entryS + " | SL=" + s_slS + " | TP=" + s_tpS + " | qty=" + s_qtyS)
+if inLong
+    float _avgL = strategy.position_avg_price
+    float _limL = na
+    if lockLongTpMode=="TP_RR"
+        float _riskL_now = _avgL - lockLongSL
+        if _riskL_now > 0
+            _limL := _avgL + _riskL_now * lockLongRR
+    strategy.exit(id=EXIT_LONG_ID, from_entry=ENTRY_LONG_ID, stop=lockLongSL, limit=_limL)
+    if logTrades and not na(_limL)
+        string s_avgL = str.tostring(_avgL)
+        string s_slL2 = str.tostring(lockLongSL)
+        string s_tpL2 = str.tostring(_limL)
+        log.info("LIVE LONG | avg=" + s_avgL + " | SL=" + s_slL2 + " | TP=" + s_tpL2)
+if inShort
+    float _avgS = strategy.position_avg_price
+    float _limS = na
+    if lockShortTpMode=="TP_RR"
+        float _riskS_now = lockShortSL - _avgS
+        if _riskS_now > 0
+            _limS := _avgS - _riskS_now * lockShortRR
+    strategy.exit(id=EXIT_SHORT_ID, from_entry=ENTRY_SHORT_ID, stop=lockShortSL, limit=_limS)
+    if logTrades and not na(_limS)
+        string s_avgS = str.tostring(_avgS)
+        string s_slS2 = str.tostring(lockShortSL)
+        string s_tpS2 = str.tostring(_limS)
+        log.info("LIVE SHORT | avg=" + s_avgS + " | SL=" + s_slS2 + " | TP=" + s_tpS2)
+
+// 2) Variables d’état pour n’armer qu’une fois par barre et transporter les infos vers la barre suivante
+// =================================================================================================
+// DATA-SCIENCE LOG SPEC — Export des signaux validés (format "cle=valeur;cle=valeur;...")
+// =================================================================================================
+// OBJET
+// • Chaque fois qu’un signal est VALIDÉ (après filtres), on émet un log unique, au format "clé=valeur;...".
+// • Ces logs sont pensés pour être extraits puis convertis en CSV sans ambiguïté.
+//
+// FORMAT GÉNÉRAL D’UNE LIGNE DE LOG
+// SIG=<NOM_SIGNAL>;DIplus=<val>;DIminus=<val>;RSI=<val>;Stoch=<val>;ATR=<val>;ADX=<val>;DIplus_1H=<val>;RSI_1H=<val>;Stoch_1H=<val>;ATR_1H=<val>;ADX_1H=<val>;time=<unix_ms>;bar_index=<n>
+//
+// REMARQUES
+// • <NOM_SIGNAL> ∈ { BUY_SMA20DEMA, SELL_SMA20DEMA, BUY_DEMAxSMA200, SELL_DEMAxSMA200, BUY_DEMAxEMA, SELL_DEMAxEMA, BUY_Breakout_DEMA200, SELL_Breakout_DEMA200, BUY_Breakout_ALL3, SELL_Breakout_ALL3 }.
+// • Les valeurs numériques sont arrondies comme sur les labels : DI/RSI/Stoch/ADX arrondis à 0,1 ; ATR arrondi à 0,01.
+// • "time" est le timestamp TradingView en millisecondes (epoch ms). "bar_index" est l’index de la barre TV.
+//
+// DICTIONNAIRE DES CLÉS / KPI
+// 1) SIG                      → Nom du signal validé (voir liste ci-dessus). String.
+// 2) DIplus                   → Directional Indicator + (Wilder). Mesure la force des hausses récentes (0–100). Source: diPlus.
+// 3) DIminus                  → Directional Indicator − (Wilder). Mesure la force des baisses récentes (0–100). Source: diMinus.
+// 4) RSI                      → Relative Strength Index (période = rsiLen). Momentum borné 0–100. Source: rsiVal.
+// 5) Stoch                    → Stochastique %K (lissé, 0–100). Source: stochKc.
+// 6) ATR                      → Average True Range (période = atrLen). Volatilité absolue en points/prix. Source: atrVal.
+// 7) ADX                      → Average Directional Index. Intensité de la tendance (0–100, sens-agnostique). Source: adx.
+// 8) DIplus_1H                → DI+ en timeframe 1H (instantané/snapshot). Source: diPlus_1H.
+// 9) RSI_1H                   → RSI en timeframe 1H. Source: rsiVal_1H.
+// 10) Stoch_1H                → %K stochastique en 1H. Source: stochKc_1H.
+// 11) ATR_1H                  → ATR en 1H. Source: atrVal_1H.
+// 12) ADX_1H                  → ADX en 1H. Source: adx_1H.
+// 13) time                    → Timestamp de la barre (millisecondes depuis epoch). Source: time.
+// 14) bar_index               → Index entier de la barre TradingView. Source: bar_index.
+//
+// EXEMPLES
+// • BUY label (SMA20×DEMA) :
+//   SIG=BUY_SMA20DEMA;DIplus=27.6;RSI=58.3;Stoch=74.1;ATR=12.45;ADX=19.8;DIplus_1H=23.4;RSI_1H=55.0;Stoch_1H=61.0;ATR_1H=10.32;ADX_1H=17.3;time=1696419300000;bar_index=12345
+// • SELL label (DEMA×EMA) :
+//   SIG=SELL_DEMAxEMA;DIminus=29.1;RSI=42.7;Stoch=31.5;ATR=8.07;ADX=22.4;DIplus_1H=18.9;RSI_1H=47.2;Stoch_1H=38.0;ATR_1H=7.65;ADX_1H=20.1;time=1696422900000;bar_index=12418
+//
+// PARSING → CSV (guide rapide)
+// • Séparer chaque ligne par ';' pour obtenir les paires "clé=valeur".
+// • Séparer chaque paire sur '=' pour extraire clé et valeur.
+// • Construire un tableau avec colonnes: SIG, DIplus, DIminus, RSI, Stoch, ATR, ADX, DIplus_1H, RSI_1H, Stoch_1H, ATR_1H, ADX_1H, time, bar_index.
+// • Convertir les colonnes numériques en float/int (attention: "time" est un int64 en ms).
+//
+// QUALITÉ & COHÉRENCE
+// • Les logs ne sont émis que lorsque le signal est validé après filtres (EMA/SMA, distance ATR, ADX, DI window, Stoch et versions 1H).
+// • Les arrondis sont identiques aux labels graphiques pour éviter tout écart entre visuel et dataset.
+// • Les snapshots 1H sont rafraîchis lorsque triggerSignal est vrai sur la barre courante, garantissant la cohérence temporelle des KPI.
+// =================================================================================================
+
+// ==========================
+// ==========================
+
+
+if logDiag and triggerSignal
+    bool c_buy_raw = buySignalRaw
+    bool c_buy_ema = not useBuyFilterEMA200 or close > ema200
+    bool c_buy_sma = not useBuyFilterSMA200 or close > sma200
+    bool c_buy_dist = buyOkDistDema200
+    bool c_buy_adx = adxOK
+    bool c_buy_di = diBuyWindowOK
+    bool c_buy_stoch = stochBuyOK
+    bool c_buy_adx1 = adxOK_1H
+    bool c_buy_di1 = diBuyWindowOK_1H
+    bool c_buy_stoch1 = stochBuyOK_1H
+    log.info("[EVAL BUY SMA20×DEMA] raw=" + str.tostring(c_buy_raw) + " ema=" + str.tostring(c_buy_ema) + " sma=" + str.tostring(c_buy_sma) + " dist=" + str.tostring(c_buy_dist) + " adx=" + str.tostring(c_buy_adx) + " diWnd=" + str.tostring(c_buy_di) + " stoch=" + str.tostring(c_buy_stoch) + " | 1H adx=" + str.tostring(c_buy_adx1) + " diWnd=" + str.tostring(c_buy_di1) + " stoch=" + str.tostring(c_buy_stoch1) + " | RESULT=" + str.tostring(buySignal))
+    bool c_bs_raw = buyDema200Sma200SignalRaw
+    log.info("[EVAL BUY DEMA×SMA] raw=" + str.tostring(c_bs_raw) + " ema=" + str.tostring(c_buy_ema) + " sma=" + str.tostring(c_buy_sma) + " dist=" + str.tostring(c_buy_dist) + " adx=" + str.tostring(c_buy_adx) + " diWnd=" + str.tostring(c_buy_di) + " stoch=" + str.tostring(c_buy_stoch) + " | 1H adx=" + str.tostring(c_buy_adx1) + " diWnd=" + str.tostring(c_buy_di1) + " stoch=" + str.tostring(c_buy_stoch1) + " | RESULT=" + str.tostring(buyDema200Sma200Signal))
+    bool c_be_raw = buyDema200Ema200SignalRaw
+    log.info("[EVAL BUY DEMA×EMA] raw=" + str.tostring(c_be_raw) + " ema=" + str.tostring(c_buy_ema) + " sma=" + str.tostring(c_buy_sma) + " dist=" + str.tostring(c_buy_dist) + " adx=" + str.tostring(c_buy_adx) + " diWnd=" + str.tostring(c_buy_di) + " stoch=" + str.tostring(c_buy_stoch) + " | 1H adx=" + str.tostring(c_buy_adx1) + " diWnd=" + str.tostring(c_buy_di1) + " stoch=" + str.tostring(c_buy_stoch1) + " | RESULT=" + str.tostring(buyDema200Ema200Signal))
+    bool c_sell_raw = sellSignalRaw
+    bool c_sell_ema = not useSellFilterEMA200 or close < ema200
+    bool c_sell_sma = not useSellFilterSMA200 or close < sma200
+    bool c_sell_dist = sellOkDistDema200
+    bool c_sell_adx = adxOK
+    bool c_sell_di = diSellWindowOK
+    bool c_sell_stoch = stochSellOK
+    bool c_sell_adx1 = adxOK_1H
+    bool c_sell_di1 = diSellWindowOK_1H
+    bool c_sell_stoch1 = stochSellOK_1H
+    log.info("[EVAL SELL SMA20×DEMA] raw=" + str.tostring(c_sell_raw) + " ema=" + str.tostring(c_sell_ema) + " sma=" + str.tostring(c_sell_sma) + " dist=" + str.tostring(c_sell_dist) + " adx=" + str.tostring(c_sell_adx) + " diWnd=" + str.tostring(c_sell_di) + " stoch=" + str.tostring(c_sell_stoch) + " | 1H adx=" + str.tostring(c_sell_adx1) + " diWnd=" + str.tostring(c_sell_di1) + " stoch=" + str.tostring(c_sell_stoch1) + " | RESULT=" + str.tostring(sellSignal))
+    bool c_ss_raw = sellDema200Sma200SignalRaw
+    log.info("[EVAL SELL DEMA×SMA] raw=" + str.tostring(c_ss_raw) + " ema=" + str.tostring(c_sell_ema) + " sma=" + str.tostring(c_sell_sma) + " dist=" + str.tostring(c_sell_dist) + " adx=" + str.tostring(c_sell_adx) + " diWnd=" + str.tostring(c_sell_di) + " stoch=" + str.tostring(c_sell_stoch) + " | 1H adx=" + str.tostring(c_sell_adx1) + " diWnd=" + str.tostring(c_sell_di1) + " stoch=" + str.tostring(c_sell_stoch1) + " | RESULT=" + str.tostring(sellDema200Sma200Signal))
+    bool c_se_raw = sellDema200Ema200SignalRaw
+    log.info("[EVAL SELL DEMA×EMA] raw=" + str.tostring(c_se_raw) + " ema=" + str.tostring(c_sell_ema) + " sma=" + str.tostring(c_sell_sma) + " dist=" + str.tostring(c_sell_dist) + " adx=" + str.tostring(c_sell_adx) + " diWnd=" + str.tostring(c_sell_di) + " stoch=" + str.tostring(c_sell_stoch) + " | 1H adx=" + str.tostring(c_sell_adx1) + " diWnd=" + str.tostring(c_sell_di1) + " stoch=" + str.tostring(c_sell_stoch1) + " | RESULT=" + str.tostring(sellDema200Ema200Signal))
+    if logSignalRejections and triggerSignal
+        bool b_raw = buySignalRaw
+        bool b_fin = buySignal
+        bool b_ema = not useBuyFilterEMA200 or close > ema200
+        bool b_sma = not useBuyFilterSMA200 or close > sma200
+        bool b_dist = buyOkDistDema200
+        bool b_adx = adxOK
+        bool b_di = diBuyWindowOK
+        bool b_sto = stochBuyOK
+        bool b_rsi = rsiBuyOK
+        bool b_kd = stochBuyKgeD_OK
+        bool b_dom = diBuyDominanceOK
+        bool b_dip = diPlusRangeBuyOK
+        bool b_atr = atrValueRangeBuyOK
+        bool b_adx1 = adxOK_1H
+        bool b_di1 = diBuyWindowOK_1H
+        bool b_sto1 = stochBuyOK_1H
+        bool b_rsi1 = rsiBuyOK_1H
+        bool b_dom1 = diBuyDominanceOK_1H
+        bool b_dip1 = diPlusRangeBuyOK_1H
+        bool b_atr1 = atrValueRangeBuyOK_1H
+        if b_raw and not b_fin
+            log.info("REJ;SIG=BUY_SMA20DEMA;ema="+str.tostring(b_ema)+";sma="+str.tostring(b_sma)+";dist="+str.tostring(b_dist)+";adx="+str.tostring(b_adx)+";diWnd="+str.tostring(b_di)+";stoch="+str.tostring(b_sto)+";rsi="+str.tostring(b_rsi)+";k>=d="+str.tostring(b_kd)+";dom="+str.tostring(b_dom)+";di+range="+str.tostring(b_dip)+";atrVal="+str.tostring(b_atr)+";adx1h="+str.tostring(b_adx1)+";diWnd1h="+str.tostring(b_di1)+";stoch1h="+str.tostring(b_sto1)+";rsi1h="+str.tostring(b_rsi1)+";dom1h="+str.tostring(b_dom1)+";di+range1h="+str.tostring(b_dip1)+";atrVal1h="+str.tostring(b_atr1)+";time="+str.tostring(time)+";bar_index="+str.tostring(bar_index))
+        bool s_raw = sellSignalRaw
+        bool s_fin = sellSignal
+        bool s_ema = not useSellFilterEMA200 or close < ema200
+        bool s_sma = not useSellFilterSMA200 or close < sma200
+        bool s_dist = sellOkDistDema200
+        bool s_adx = adxOK
+        bool s_di = diSellWindowOK
+        bool s_sto = stochSellOK
+        bool s_rsi = rsiSellOK
+        bool s_kd = stochSellKleD_OK
+        bool s_dom = diSellDominanceOK
+        bool s_dim = diMinusRangeSellOK
+        bool s_atr = atrValueRangeSellOK
+        bool s_adx1 = adxOK_1H
+        bool s_di1 = diSellWindowOK_1H
+        bool s_sto1 = stochSellOK_1H
+        bool s_rsi1 = rsiSellOK_1H
+        bool s_kd1 = stochSellKleD_OK_1H
+        bool s_dom1 = diSellDominanceOK_1H
+        bool s_dim1 = diMinusRangeSellOK_1H
+        bool s_atr1 = atrValueRangeSellOK_1H
+        if s_raw and not s_fin
+            log.info("REJ;SIG=SELL_SMA20DEMA;ema="+str.tostring(s_ema)+";sma="+str.tostring(s_sma)+";dist="+str.tostring(s_dist)+";adx="+str.tostring(s_adx)+";diWnd="+str.tostring(s_di)+";stoch="+str.tostring(s_sto)+";rsi="+str.tostring(s_rsi)+";k<=d="+str.tostring(s_kd)+";dom="+str.tostring(s_dom)+";di-range="+str.tostring(s_dim)+";atrVal="+str.tostring(s_atr)+";adx1h="+str.tostring(s_adx1)+";diWnd1h="+str.tostring(s_di1)+";stoch1h="+str.tostring(s_sto1)+";rsi1h="+str.tostring(s_rsi1)+";k<=d1h="+str.tostring(s_kd1)+";dom1h="+str.tostring(s_dom1)+";di-range1h="+str.tostring(s_dim1)+";atrVal1h="+str.tostring(s_atr1)+";time="+str.tostring(time)+";bar_index="+str.tostring(bar_index))
+
+if logDiag and triggerSignal
+    log.info("[DI DEBUG] diPlus=" + str.tostring(diPlus) + " diMinus=" + str.tostring(diMinus) + " adx=" + str.tostring(adx))
+    log.info("[DI WINDOW] lowest(diPlus," + str.tostring(diWindowLen) + ")=" + str.tostring(ta.lowest(diPlus, diWindowLen)) + " thresh=" + str.tostring(diWindowThresh))
+
+
+// ====================================================================================
+if logDiag and triggerSignal
+    log.info("=== [TRIGGER] bar_index=" + str.tostring(bar_index) + " time=" + str.tostring(time))
+    log.info("SMA20=" + str.tostring(sma20) + " | DEMA200=" + str.tostring(dema200) + " | SMA200=" + str.tostring(sma200))
+    log.info("DI+=" + str.tostring(diPlus) + " | DI-=" + str.tostring(diMinus))
+    log.info("ADX=" + str.tostring(adx) + " | RSI=" + str.tostring(rsiVal))
+    log.info("Stoch=" + str.tostring(stochKc) + " | ATR=" + str.tostring(atrVal))
+    log.info("DI+ (1H)=" + str.tostring(diPlus_1H) + " | DI- (1H)=" + str.tostring(diMinus_1H))
+    log.info("RSI (1H)=" + str.tostring(rsiVal_1H) + " | Stoch (1H)=" + str.tostring(stochKc_1H))
+    log.info("ATR (1H)=" + str.tostring(atrVal_1H))
+    // [ADD LOG] — vérifier l'état des filtres 1h au moment du signal
+    log.info("[HTF 1H] useAdxFilter_1H=" + str.tostring(useAdxFilter_1H) + " adx_1H=" + str.tostring(adx_1H) + " adxMin_1H=" + str.tostring(adxMin_1H) + " adxOK_1H=" + str.tostring(adxOK_1H))
+    log.info("[HTF 1H] adx_1H=" + str.tostring(adx_1H) + " min=" + str.tostring(adxMin_1H) + " max=" + str.tostring(adxMax_1H) + " rangeOK=" + str.tostring(adxOK_1H))
+    log.info("[HTF 1H] useDiWindowFilter_1H=" + str.tostring(useDiWindowFilter_1H) + " diPlus_1H=" + str.tostring(diPlus_1H) + " lowest(diPlus_1H," + str.tostring(diWindowLen_1H) + ")=" + str.tostring(ta.lowest(diPlus_1H, diWindowLen_1H)) + " diBuyWindowOK_1H=" + str.tostring(diBuyWindowOK_1H))
+    log.info("[HTF 1H] stochKc_1H=" + str.tostring(stochKc_1H) + " stochBuyMax_1H=" + str.tostring(stochBuyMax_1H) + " stochBuyOK_1H=" + str.tostring(stochBuyOK_1H))
+    log.info("[SIGNALS] buySignal=" + str.tostring(buySignal) + " sellSignal=" + str.tostring(sellSignal) + " buyDema200Sma200Signal=" + str.tostring(buyDema200Sma200Signal) + " sellDema200Sma200Signal=" + str.tostring(sellDema200Sma200Signal))
+
+
+
+    
+
+//plotshape(showBuy and buySignal, title="Buy (SMA20 > DEMA200)", style=shape.labelup, color=color.new(color.green, 0), text="BUY", textcolor=color.white, location=location.belowbar, size=size.tiny, offset=0)
+//plotshape(showSell and sellSignal, title="Sell (SMA20 < DEMA200)", style=shape.labeldown, color=color.new(color.red, 0), text="SELL", textcolor=color.white, location=location.abovebar, size=size.tiny, offset=0)
+if showBuy and buySignal
+    label.new(bar_index, low, "BUY\nSMA20DEMA\nDI+=" + str.tostring(math.round(diPlus*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal*100)/100.0) + "\nADX=" + str.tostring(math.round(adx*10)/10.0) + "\n— 1H —" + "\nDI+=" + str.tostring(math.round(diPlus_1H*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal_1H*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc_1H*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal_1H*100)/100.0) + "\nADX=" + str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.normal)
+
+if showSell and sellSignal
+    label.new(bar_index, high, "SELL\nSMA20DEMA\nDI-=" + str.tostring(math.round(diMinus*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal*100)/100.0) + "\nADX=" + str.tostring(math.round(adx*10)/10.0) + "\n— 1H —" + "\nDI+=" + str.tostring(math.round(diPlus_1H*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal_1H*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc_1H*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal_1H*100)/100.0) + "\nADX=" + str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.normal)
+
+
+if showBuy_DEMAxSMA and buyDema200Sma200Signal
+    label.new(bar_index, low, "BUY\nDEMAxSMA200\nDI+="+str.tostring(math.round(diPlus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal*100)/100.0) + "\nADX=" + str.tostring(math.round(adx*10)/10.0) + "\n— 1H —" + "\nDI+=" + str.tostring(math.round(diPlus_1H*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal_1H*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc_1H*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal_1H*100)/100.0) + "\nADX=" + str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.normal)
+if showSell_DEMAxSMA and sellDema200Sma200Signal
+    label.new(bar_index, high, "SELL\nDEMAxSMA200\nDI-="+str.tostring(math.round(diMinus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal*100)/100.0)  + "\nADX=" + str.tostring(math.round(adx*10)/10.0)+ "\n— 1H —" + "\nDI+=" + str.tostring(math.round(diPlus_1H*10)/10.0) + "\nRSI=" + str.tostring(math.round(rsiVal_1H*10)/10.0) + "\nStoch=" + str.tostring(math.round(stochKc_1H*10)/10.0) + "\nATR=" + str.tostring(math.round(atrVal_1H*100)/100.0) + "\nADX=" + str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.normal)
+
+if showBuy_DEMAxEMA and buyDema200Ema200Signal
+    label.new(bar_index, low, "BUY\nDEMA×EMA\nDI+="+str.tostring(math.round(diPlus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.normal)
+
+if showSell_DEMAxEMA and sellDema200Ema200Signal
+    label.new(bar_index, high, "SELL\nDEMA×EMA\nDI-="+str.tostring(math.round(diMinus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.normal)
+
+if showBuy_BrkDEMA and buyBreakoutDemaSignal
+    label.new(bar_index, low, "BUY\nBreakout DEMA200\nDI+="+str.tostring(math.round(diPlus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.normal)
+
+if showSell_BrkDEMA and sellBreakoutDemaSignal
+    label.new(bar_index, high, "SELL\nBreakout DEMA200\nDI-="+str.tostring(math.round(diMinus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.normal)
+
+if showBuy_BrkDEMAEMASMA20 and buyBreakoutAll3Signal
+    label.new(bar_index, low, "BUY\nBreakout\nDEMA&EMA&SMA20\nDI+="+str.tostring(math.round(diPlus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.normal)
+
+if showSell_BrkDEMAEMASMA20 and sellBreakoutAll3Signal
+    label.new(bar_index, high, "SELL\nBreakout\nDEMA&EMA&SMA20\nDI-="+str.tostring(math.round(diMinus*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal*100)/100.0)+"\nADX="+str.tostring(math.round(adx*10)/10.0)+"\n— 1H —"+"\nDI+="+str.tostring(math.round(diPlus_1H*10)/10.0)+"\nRSI="+str.tostring(math.round(rsiVal_1H*10)/10.0)+"\nStoch="+str.tostring(math.round(stochKc_1H*10)/10.0)+"\nATR="+str.tostring(math.round(atrVal_1H*100)/100.0)+"\nADX="+str.tostring(math.round(adx_1H*10)/10.0), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.normal)
+
+
+plotshape(showTPLong and tpLongSignal, title="TP Long — DEMA200 crossunder SMA200", style=shape.triangledown, color=color.new(color.green, 0), text="TP L", textcolor=color.green, location=location.abovebar, size=size.normal, offset=0)
+plotshape(showTPShort and tpShortSignal, title="TP Short — DEMA200 crossover SMA200", style=shape.triangleup, color=color.new(color.red, 0), text="TP S", textcolor=color.red, location=location.belowbar, size=size.normal, offset=0)
+
+
+// ======================= CFG LOG DUMP — helper =======================
+f_cfg_dump(string s)=>log.info(s)
+
+// ======================= CFG LOG DUMP — build (toutes les valeurs d’inputs) =======================
+string _ts_cfg = str.tostring(time)
+string _tf_cfg = timeframe.period
+string s_cfg = "[CFG-DUMP];ts_ms=" + _ts_cfg + ";tf=" + _tf_cfg + ";"
+
+// ---- G01 — Signaux (toggles d'affichage) ----
+string _showBuy = str.tostring(showBuy)
+string _showSell = str.tostring(showSell)
+string _showBuy_DEMAxSMA = str.tostring(showBuy_DEMAxSMA)
+string _showSell_DEMAxSMA = str.tostring(showSell_DEMAxSMA)
+string _showBuy_DEMAxEMA = str.tostring(showBuy_DEMAxEMA)
+string _showSell_DEMAxEMA = str.tostring(showSell_DEMAxEMA)
+string _showBuy_BrkDEMA = str.tostring(showBuy_BrkDEMA)
+string _showSell_BrkDEMA = str.tostring(showSell_BrkDEMA)
+string _showBuy_BrkDEMAEMASMA20 = str.tostring(showBuy_BrkDEMAEMASMA20)
+string _showSell_BrkDEMAEMASMA20 = str.tostring(showSell_BrkDEMAEMASMA20)
+string _showTPLong = str.tostring(showTPLong)
+string _showTPShort = str.tostring(showTPShort)
+s_cfg := s_cfg + "G01_SIGNALS|showBuy=" + _showBuy + "|showSell=" + _showSell + "|showBuy_DEMAxSMA=" + _showBuy_DEMAxSMA + "|showSell_DEMAxSMA=" + _showSell_DEMAxSMA + "|showBuy_DEMAxEMA=" + _showBuy_DEMAxEMA + "|showSell_DEMAxEMA=" + _showSell_DEMAxEMA + "|showBuy_BrkDEMA=" + _showBuy_BrkDEMA + "|showSell_BrkDEMA=" + _showSell_BrkDEMA + "|showBuy_BrkALL3=" + _showBuy_BrkDEMAEMASMA20 + "|showSell_BrkALL3=" + _showSell_BrkDEMAEMASMA20 + "|showTPLong=" + _showTPLong + "|showTPShort=" + _showTPShort + "|"
+
+// ---- G02 — Filtres communs (LTF) ----
+string _useBuyFilterEMA200 = str.tostring(useBuyFilterEMA200)
+string _useSellFilterEMA200 = str.tostring(useSellFilterEMA200)
+string _useBuyFilterSMA200 = str.tostring(useBuyFilterSMA200)
+string _useSellFilterSMA200 = str.tostring(useSellFilterSMA200)
+string _useAtrDistDema200Filter = str.tostring(useAtrDistDema200Filter)
+string _atrMult = str.tostring(atrMultDema200)
+string _atrLen = str.tostring(atrLen)
+string _adxLen = str.tostring(adxLen)
+string _rsiLen = str.tostring(rsiLen)
+string _stochLen = str.tostring(stochLen)
+string _stochSmoothK = str.tostring(stochSmoothK)
+string _diWindowLen = str.tostring(diWindowLen)
+string _diWindowThresh = str.tostring(diWindowThresh)
+string _useAdxFilter = str.tostring(useAdxFilter)
+string _adxMin = str.tostring(adxMin)
+string _adxMax = str.tostring(adxMax)
+string _useDiWindowFilter = str.tostring(useDiWindowFilter)
+s_cfg := s_cfg + "G02_FILTERS_LTF|useBuyEMA200=" + _useBuyFilterEMA200 + "|useSellEMA200=" + _useSellFilterEMA200 + "|useBuySMA200=" + _useBuyFilterSMA200 + "|useSellSMA200=" + _useSellFilterSMA200 + "|useAtrDist=" + _useAtrDistDema200Filter + "|atrMultDema200=" + _atrMult + "|atrLen=" + _atrLen + "|adxLen=" + _adxLen + "|rsiLen=" + _rsiLen + "|stochLen=" + _stochLen + "|stochSmoothK=" + _stochSmoothK + "|diWindowLen=" + _diWindowLen + "|diWindowThresh=" + _diWindowThresh + "|useAdx=" + _useAdxFilter + "|adxMin=" + _adxMin + "|adxMax=" + _adxMax + "|useDiWin=" + _useDiWindowFilter + "|"
+
+// ---- G03 — BUY LTF ----
+string _useDiBuyDominance = str.tostring(useDiBuyDominance)
+string _useRsiBuyFilter = str.tostring(useRsiBuyFilter)
+string _rsiBuyMin = str.tostring(rsiBuyMin)
+string _rsiBuyMax = str.tostring(rsiBuyMax)
+string _useStochFilter = str.tostring(useStochFilter)
+string _stochBuyMin = str.tostring(stochBuyMin)
+string _stochBuyMax = str.tostring(stochBuyMax)
+string _useStochBuyKgeD = str.tostring(useStochBuyKgeD)
+string _useDiPlusRangeBuy = str.tostring(useDiPlusRangeBuy)
+string _diPlusBuyMin = str.tostring(diPlusBuyMin)
+string _diPlusBuyMax = str.tostring(diPlusBuyMax)
+string _useAtrValueRangeBuy = str.tostring(useAtrValueRangeBuy)
+string _atrBuyMin = str.tostring(atrBuyMin)
+string _atrBuyMax = str.tostring(atrBuyMax)
+s_cfg := s_cfg + "G03_BUY_LTF|useDIpDom=" + _useDiBuyDominance + "|useRsi=" + _useRsiBuyFilter + "|rsiMin=" + _rsiBuyMin + "|rsiMax=" + _rsiBuyMax + "|useStoch=" + _useStochFilter + "|stochMin=" + _stochBuyMin + "|stochMax=" + _stochBuyMax + "|useKgeD=" + _useStochBuyKgeD + "|useDIpRange=" + _useDiPlusRangeBuy + "|DIpMin=" + _diPlusBuyMin + "|DIpMax=" + _diPlusBuyMax + "|useAtrValRange=" + _useAtrValueRangeBuy + "|atrMin=" + _atrBuyMin + "|atrMax=" + _atrBuyMax + "|"
+
+// ---- G04 — SELL LTF ----
+string _useRsiSellRange = str.tostring(useRsiSellRange)
+string _rsiSellMin = str.tostring(rsiSellMin)
+string _rsiSellMax = str.tostring(rsiSellMax)
+string _stochSellMin = str.tostring(stochSellMin)
+string _stochSellMax = str.tostring(stochSellMax)
+string _useStochSellKleD = str.tostring(useStochSellKleD)
+string _useDiSellDominance = str.tostring(useDiSellDominance)
+string _useDiMinusRangeSell = str.tostring(useDiMinusRangeSell)
+string _diMinusSellMin = str.tostring(diMinusSellMin)
+string _diMinusSellMax = str.tostring(diMinusSellMax)
+string _useAtrValueRangeSell = str.tostring(useAtrValueRangeSell)
+string _atrSellMin = str.tostring(atrSellMin)
+string _atrSellMax = str.tostring(atrSellMax)
+s_cfg := s_cfg + "G04_SELL_LTF|useRsi=" + _useRsiSellRange + "|rsiMin=" + _rsiSellMin + "|rsiMax=" + _rsiSellMax + "|stochMin=" + _stochSellMin + "|stochMax=" + _stochSellMax + "|useKleD=" + _useStochSellKleD + "|useDImDom=" + _useDiSellDominance + "|useDImRange=" + _useDiMinusRangeSell + "|DImMin=" + _diMinusSellMin + "|DImMax=" + _diMinusSellMax + "|useAtrValRange=" + _useAtrValueRangeSell + "|atrMin=" + _atrSellMin + "|atrMax=" + _atrSellMax + "|"
+
+// ---- G05 — Communs 1H ----
+string _useAdxFilter_1H = str.tostring(useAdxFilter_1H)
+string _adxMin_1H = str.tostring(adxMin_1H)
+string _adxMax_1H = str.tostring(adxMax_1H)
+string _useDiWindowFilter_1H = str.tostring(useDiWindowFilter_1H)
+string _diWindowLen_1H = str.tostring(diWindowLen_1H)
+string _diWindowThresh_1H = str.tostring(diWindowThresh_1H)
+string _tfHTF = tfHTF
+s_cfg := s_cfg + "G05_COMMON_1H|tfHTF=" + _tfHTF + "|useAdx_1H=" + _useAdxFilter_1H + "|adxMin_1H=" + _adxMin_1H + "|adxMax_1H=" + _adxMax_1H + "|useDiWin_1H=" + _useDiWindowFilter_1H + "|diWinLen_1H=" + _diWindowLen_1H + "|diWinThr_1H=" + _diWindowThresh_1H + "|"
+
+// ---- G06 — BUY 1H ----
+string _useDiBuyDominance_1H = str.tostring(useDiBuyDominance_1H)
+string _useRsiBuyFilter_1H = str.tostring(useRsiBuyFilter_1H)
+string _rsiBuyMin_1H = str.tostring(rsiBuyMin_1H)
+string _rsiBuyMax_1H = str.tostring(rsiBuyMax_1H)
+string _useStochFilter_1H = str.tostring(useStochFilter_1H)
+string _stochBuyMin_1H = str.tostring(stochBuyMin_1H)
+string _stochBuyMax_1H = str.tostring(stochBuyMax_1H)
+string _useStochBuyKgeD_1H = str.tostring(useStochBuyKgeD_1H)
+string _useDiPlusRangeBuy_1H = str.tostring(useDiPlusRangeBuy_1H)
+string _diPlusBuyMin_1H = str.tostring(diPlusBuyMin_1H)
+string _diPlusBuyMax_1H = str.tostring(diPlusBuyMax_1H)
+string _useAtrValueRangeBuy_1H = str.tostring(useAtrValueRangeBuy_1H)
+string _atrBuyMin_1H = str.tostring(atrBuyMin_1H)
+string _atrBuyMax_1H = str.tostring(atrBuyMax_1H)
+s_cfg := s_cfg + "G06_BUY_1H|useDIpDom_1H=" + _useDiBuyDominance_1H + "|useRsi_1H=" + _useRsiBuyFilter_1H + "|rsiMin_1H=" + _rsiBuyMin_1H + "|rsiMax_1H=" + _rsiBuyMax_1H + "|useStoch_1H=" + _useStochFilter_1H + "|stochMin_1H=" + _stochBuyMin_1H + "|stochMax_1H=" + _stochBuyMax_1H + "|useKgeD_1H=" + _useStochBuyKgeD_1H + "|useDIpRange_1H=" + _useDiPlusRangeBuy_1H + "|DIpMin_1H=" + _diPlusBuyMin_1H + "|DIpMax_1H=" + _diPlusBuyMax_1H + "|useAtrValRange_1H=" + _useAtrValueRangeBuy_1H + "|atrMin_1H=" + _atrBuyMin_1H + "|atrMax_1H=" + _atrBuyMax_1H + "|"
+
+// ---- G07 — SELL 1H ----
+string _useRsiSellRange_1H = str.tostring(useRsiSellRange_1H)
+string _rsiSellMin_1H = str.tostring(rsiSellMin_1H)
+string _rsiSellMax_1H = str.tostring(rsiSellMax_1H)
+string _useStochFilter_1H_SELLOVL = str.tostring(useStochFilter_1H_SELLOVL)
+string _stochSellMin_1H = str.tostring(stochSellMin_1H)
+string _stochSellMax_1H = str.tostring(stochSellMax_1H)
+string _useStochSellKleD_1H = str.tostring(useStochSellKleD_1H)
+string _useDiMinusRangeSell_1H = str.tostring(useDiMinusRangeSell_1H)
+string _diMinusSellMin_1H = str.tostring(diMinusSellMin_1H)
+string _diMinusSellMax_1H = str.tostring(diMinusSellMax_1H)
+string _useAtrValueRangeSell_1H = str.tostring(useAtrValueRangeSell_1H)
+string _atrSellMin_1H = str.tostring(atrSellMin_1H)
+string _atrSellMax_1H = str.tostring(atrSellMax_1H)
+string _useDiSellDominance_1H = str.tostring(useDiSellDominance_1H)
+
+s_cfg := s_cfg + "G07_SELL_1H|useRsi_1H=" + _useRsiSellRange_1H + "|rsiMin_1H=" + _rsiSellMin_1H + "|rsiMax_1H=" + _rsiSellMax_1H + "|useStoch_1H=" + _useStochFilter_1H_SELLOVL + "|stochMin_1H=" + _stochSellMin_1H + "|stochMax_1H=" + _stochSellMax_1H + "|useKleD_1H=" + _useStochSellKleD_1H + "|useDImRange_1H=" + _useDiMinusRangeSell_1H + "|DImMin_1H=" + _diMinusSellMin_1H + "|DImMax_1H=" + _diMinusSellMax_1H + "|useAtrValRange_1H=" + _useAtrValueRangeSell_1H + "|atrMin_1H=" + _atrSellMin_1H + "|atrMax_1H=" + _atrSellMax_1H + "|useDImDom_1H=" + _useDiSellDominance_1H + "|"
+// ---- G08 — STRAT (Entrées · SL/TP · Risk) ----
+string _slMethod = slMethod
+string _slAtrMult = str.tostring(slAtrMult)
+string _tpMode = tpMode
+string _tpRR = str.tostring(tpRR)
+string _riskUSD = str.tostring(riskUSD)
+string _logTrades = str.tostring(logTrades)
+string _useNBarConfirm = str.tostring(useNBarConfirm)
+string _nConfirmBars = str.tostring(nConfirmBars)
+
+s_cfg := s_cfg + "G08_STRAT|slMethod=" + _slMethod + "|slAtrMult=" + _slAtrMult + "|tpMode=" + _tpMode + "|tpRR=" + _tpRR + "|riskUSD=" + _riskUSD + "|logTrades=" + _logTrades + "|useNBarConfirm=" + _useNBarConfirm + "|nConfirmBars=" + _nConfirmBars + "|"
+
+// ---- G09 — Debugs ----
+string _logDiag = str.tostring(logDiag)
+string _logKPISignals = str.tostring(logKPISignals)
+string _logKPIOpenTrades = str.tostring(logKPIOpenTrades)
+s_cfg := s_cfg + "G09_DEBUG|logDiag=" + _logDiag + "|logKPISignals=" + _logKPISignals + "|logKPIOpenTrades=" + _logKPIOpenTrades + "|"
+
+// ======================= CFG LOG DUMP — trigger (une seule fois) =======================
+var bool __did_dump_cfg = false
+bool __do_dump_cfg = (barstate.islastconfirmedhistory or (barstate.isrealtime and barstate.islast))
+if __do_dump_cfg and not __did_dump_cfg and logdump
+    f_cfg_dump(s_cfg)
+    __did_dump_cfg := true
+
+
